@@ -222,7 +222,7 @@ export class ActiveRoute {
     return { x: this.points[0].x, z: this.points[0].z };
   }
 
-  update(pos, gsMs = 120) {
+  update(pos, gsMs = 120, vel = null) {
     if (this.legs.length === 0) return null;
     let sequenced = null;
     const gsKt = gsMs * MS2KT;
@@ -233,8 +233,8 @@ export class ActiveRoute {
       const along = (pos.x - a.x) * l.ux + (pos.z - a.z) * l.uz;
       const remM = l.len - along;
       const directM = Math.hypot(b.x - pos.x, b.z - pos.z);
-      const leadM = Math.min(l.len * 0.45, turnAnticipationNm(gsKt, wrap180(nl.crs - l.crs)) * NM);
-      if ((along >= 0 && remM <= leadM) || directM <= Math.max(leadM, 600)) {
+      const leadM = Math.min(l.len * 0.45, Math.max(800, turnAnticipationNm(gsKt, wrap180(nl.crs - l.crs)) * NM));
+      if ((along >= 0 && remM <= leadM) || directM <= Math.max(leadM, 800)) {
         this.legIndex++;
         sequenced = this.points[this.legIndex].id;
       }
@@ -244,6 +244,7 @@ export class ActiveRoute {
     const rx = pos.x - a.x, rz = pos.z - a.z;
     const along = rx * l.ux + rz * l.uz;
     const xtkM = rx * -l.uz + rz * l.ux;                 // right of track +
+    const vlat = vel ? (vel.x * -l.uz + vel.z * l.ux) : 0;
     const remM = Math.max(0, l.len - along);
     let tailM = 0;
     for (let k = i + 1; k < this.legs.length; k++) tailM += this.legs[k].len;
@@ -252,10 +253,11 @@ export class ActiveRoute {
     const brgToWpt = (Math.atan2(b.x - pos.x, -(b.z - pos.z)) / D2R + 360) % 360;
     const offRoute = Math.abs(xtkM) > 5 * NM;
     let desiredTrack;
-    if (offRoute || along < -500 || remM < 1000) {
+    if (offRoute || along < -1500) {
       desiredTrack = brgToWpt;
     } else {
-      const corr = clamp(-xtkM * 0.02, -45, 45);
+      // damped cross-track intercept (prevents S-turn hunting / oscillation)
+      const corr = clamp(-xtkM * 0.008 - vlat * 0.55, -35, 35);
       desiredTrack = (l.crs + corr + 360) % 360;
     }
     const constraints = this.points.slice(i + 1).map(p => p.alt).filter(Boolean);

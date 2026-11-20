@@ -1,6 +1,7 @@
 import { clamp } from './noise.js';
 import { MS2KT, M2FT } from './physics.js';
 import { vnavTarget, NM } from './flightplan.js';
+import { VFE } from './warnings.js';
 
 // Autopilot + autothrottle (Boeing-style MCP logic, simplified).
 // Lateral: HDG SEL | LNAV | LOC.   Vertical: V/S | LVL CHG | VNAV | ALT (ACQ/HOLD) | G/S | FLARE.
@@ -25,7 +26,7 @@ export class Autopilot {
     this.vnavTargetAlt = null;
     this.spdIntv = false;
     this.listeners = [];
-    this.pitchI = 0; this.thrI = 0; this.flchVs = 0; this.lastHdg = null; this.hdgRate = 0;
+    this.pitchI = 0; this.thrI = 0; this.flchVs = 0; this.lastHdg = null; this.hdgRate = 0; this.bankCmd = 0;
     this.apGrace = 0;
     this.msg = null;
   }
@@ -81,7 +82,7 @@ export class Autopilot {
   toggleAP() {
     if (this.ap) return this.disconnect('AUTOPILOT DISCONNECT');
     if (this.fm.onGround) return this.emit('A/P: önce kalkış yap', 'amber');
-    this.ap = true; this.pitchI = 0; this.apGrace = 0.5;
+    this.ap = true; this.pitchI = 0; this.apGrace = 0.5; this.bankCmd = -this.fm.euler.z / D2R;
     this.lat = this.armedLnav && this.route?.legs?.length ? 'LNAV' : 'HDG';
     if (this.armedVnav && this.route?.legs?.length) {
       this.vert = 'VNAV';
@@ -161,7 +162,7 @@ export class Autopilot {
       this.emit('LNAV + VNAV HAZIR · Kalkıştan sonra A/P (I) aç', 'cyan');
       return;
     }
-    this.ap = true; this.pitchI = 0; this.apGrace = 0.5;
+    this.ap = true; this.pitchI = 0; this.apGrace = 0.5; this.bankCmd = -this.fm.euler.z / D2R;
     this.lat = 'LNAV'; this.vert = 'VNAV'; this.spdIntv = false;
     this.appArmed = false; this.gsArmed = false;
     this.armedLnav = false; this.armedVnav = false;
@@ -195,8 +196,12 @@ export class Autopilot {
     const gsMS = Math.hypot(fm.vel.x, fm.vel.z);
     const track = gsMS > 5 ? (Math.atan2(fm.vel.x, -fm.vel.z) / D2R + 360) % 360 : hdg;
 
-    this.navState = this.route ? this.route.update(fm.pos, gsMS) : null;
+    this.navState = this.route ? this.route.update(fm.pos, gsMS, fm.vel) : null;
     if (this.navState?.sequenced) this.emit(`WPT SEQ: ${this.navState.sequenced}`, 'cyan');
+
+    // flap-safe target speed cap (prevents overspeed on takeoff/approach before flaps retract)
+    const maxSafeSpd = (VFE[fm.ctl.flapIndex] ?? 340) - 12;
+    const effSpd = Math.min(this.sel.spd, maxSafeSpd);
 
     if (this.ap) {
       // ---------- lateral
@@ -224,13 +229,15 @@ export class Autopilot {
       } else if (this.lat === 'LNAV' && this.navState) {
         this.sel.hdg = Math.round(this.navState.desiredTrack) || 360;
         const err = wrap180(this.navState.desiredTrack - track);
-        bankT = clamp(err * 1.4 - this.hdgRate * 2.2, -25, 25);
+        bankT = clamp(err * 0.95 - this.hdgRate * 2.4, -22, 22);
       } else {
         const err = wrap180(this.sel.hdg - hdg);
         bankT = clamp(err * 1.25 - this.hdgRate * 2.0, -25, 25);
       }
+      // smooth roll command rate (max 10°/s) so waypoint transitions never rock the wings
+      this.bankCmd += clamp(bankT - this.bankCmd, -10 * dt, 10 * dt);
       const bank = -e.z / D2R, pR = -fm.omega.z;
-      ctl.aileron = clamp((bankT - bank) * 0.045 - pR * 0.9, -0.6, 0.6);
+      ctl.aileron = clamp((this.bankCmd - bank) * 0.045 - pR * 0.9, -0.6, 0.6);
       ctl.rudder = 0;
 
       // ---------- vertical
@@ -263,16 +270,13 @@ export class Autopilot {
         this.vnavTargetAlt = vn.altFt;
         if (!this.spdIntv) this.sel.spd = Math.round(vn.spdKt);
         if (vn.phase === 'CLB') {
+          this.atMode = 'SPD';
           const vErr = vn.altFt - alt;
           if (Math.abs(vErr) < 150) {
-            this.atMode = 'SPD';
             vsT = clamp(vErr * 4.5, -1500, 1500);
           } else {
-            this.atMode = 'THR';
-            const se = clamp(ias - this.sel.spd, -15, 15);
-            this.flchVs += se * 14 * dt;
-            this.flchVs = clamp(this.flchVs, 300, 6000);
-            vsT = clamp(this.flchVs + se * 35, 0, 6000);
+            const spdMargin = clamp((ias - (effSpd - 20)) / 20, 0.25, 1);
+            vsT = clamp(vErr * 2.2, 400, 2200) * spdMargin;
           }
         } else if (vn.phase === 'CRZ') {
           this.atMode = 'SPD';
@@ -329,11 +333,11 @@ export class Autopilot {
         thrT = 0;
       } else if (this.atMode === 'THR') {
         const tgt = this.vert === 'VNAV' && this.vnavTargetAlt != null ? this.vnavTargetAlt : this.sel.alt;
-        thrT = tgt > alt ? 0.93 : 0;
+        thrT = tgt > alt ? (ias > maxSafeSpd ? 0.35 : 0.93) : 0;
       } else {
-        const err = this.sel.spd - ias;
+        const err = effSpd - ias;
         this.thrI = clamp(this.thrI + err * 0.006 * dt, 0, 1);
-        thrT = clamp(this.thrI + err * 0.035 - (vs > 0 ? 0 : 0) , 0, 1);
+        thrT = clamp(this.thrI + err * 0.035, 0, 1);
       }
       ctl.throttle += clamp(thrT - ctl.throttle, -0.25 * dt, 0.25 * dt);
       if (this.atMode === 'THR') this.thrI = ctl.throttle;
