@@ -1,4 +1,5 @@
 // Mode Control Panel (glareshield) UI for the autopilot.
+import { tips } from './tooltip.js';
 const CSS = `
 #mcp { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; align-items: stretch; gap: 6px;
   padding: 7px 9px; border-radius: 10px; background: linear-gradient(180deg, #2b3138, #1d2227); border: 1px solid #4a525b;
@@ -29,6 +30,7 @@ export class MCP {
     const el = this.el = document.createElement('div');
     el.id = 'mcp';
     el.innerHTML = `
+      <div class="grp mcp-grip" style="width:14px;padding-right:2px">⋮⋮</div>
       <div class="grp"><button data-b="AT">A/T</button>
         <div class="win"><label>IAS kt</label><input data-k="spd" inputmode="numeric"></div>
         <button data-b="FLCH">LVL CHG</button></div>
@@ -65,6 +67,19 @@ export class MCP {
         this.render(true);
       }, { passive: false });
     }
+    tips(el, {
+      '[data-b="AT"]': 'A/T · Otomatik gaz|Gazı otomatik yöneterek IAS alanındaki hızı tutar. Gaz tuşlarına basınca devreden çıkar. Kısayol: [Shift]+[I]',
+      '[data-b="FLCH"]': 'LVL CHG · Seviye değişimi|Gaz sabit (tırmanışta güç, alçalışta rölanti); hızı burunla tutarak ALT değerine çıkar ya da iner. Büyük irtifa değişiklikleri için.',
+      '[data-b="HDG"]': 'HDG SEL · Yön seçimi|Uçak HDG alanındaki yöne döner (en fazla 25° yatış). APP modunu iptal eder.',
+      '[data-b="APP"]': 'APP · ILS yaklaşma ve otomatik iniş|Seçili piste önce merkez hattını (LOC), sonra 3° süzülüş yolunu (G/S) yakalar. 50 ft’te flare, 30 ft’te gaz kesme, teker koyunca spoiler. Flap ve takımı sen aç.',
+      '[data-b="ALT"]': 'ALT HLD · İrtifa tut|Şu anki irtifayı tutar. ALT alanına yeni değer yazarsan otopilot oraya kendisi tırmanır/iner.',
+      '[data-b="VS"]': 'V/S · Dikey hız|V/S alanındaki dikey hızla (fpm) tırmanır veya alçalır; ALT değerine gelince irtifayı yakalar.',
+      '[data-b="AP"]': 'A/P · Otopilot|Otopilotu açar/kapatır. Yön tuşlarına basınca devreden çıkar. Yerdeyken devreye girmez. Kısayol: [I]',
+      'input[data-k="spd"]': 'IAS · Hedef hız (knot)|Otomatik gazın tutacağı gösterge hızı. Tekerle ±1, [Shift]+teker ±10.',
+      'input[data-k="hdg"]': 'HDG · Hedef yön (derece)|HDG SEL modunda dönülecek manyetik yön. Tekerle ±1°, [Shift] ile ±10°.',
+      'input[data-k="alt"]': 'ALT · Hedef irtifa (feet)|Otopilotun çıkacağı/ineceği irtifa. Tekerle ±100 ft, [Shift] ile ±1000 ft.',
+      'input[data-k="vs"]': 'V/S · Dikey hız (feet/dakika)|V/S modunda kullanılan tırmanma (+) veya alçalma (−) hızı. Tekerle ±100.',
+    });
     ap.onChange(() => this.render());
     this.render(true);
   }

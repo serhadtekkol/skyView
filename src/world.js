@@ -1,7 +1,23 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { createNoise2D, fbm, smoothstep, clamp, lerp, mulberry32 } from './noise.js';
-import { canvasTex, noiseFill, buildRunway, updateRunwayLights } from './airport.js';
+import { canvasTex, noiseFill, buildRunway, updateRunwayLights, makeGlowMaterial as makeGlowMat, makePoints as makePts } from './airport.js';
+
+/** Emissive mask: lit (warm) windows on black, some dark at random. */
+function windowGlow(size, cols, rows, litShare = 0.6) {
+  const c = document.createElement('canvas'); c.width = c.height = size;
+  const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, size, size);
+  const rnd = mulberry32(size + cols * 7 + rows);
+  const cw = size / cols, rh = size / rows;
+  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+    if (rnd() > litShare) continue;
+    const v = 150 + rnd() * 105;
+    g.fillStyle = `rgb(${v}, ${v * (0.8 + rnd() * 0.15)}, ${v * (0.45 + rnd() * 0.3)})`;
+    g.fillRect(x * cw + cw * 0.12, y * rh + rh * 0.3, cw * 0.76, rh * 0.5);
+  }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
 import { LocalFrame } from './geo.js';
 import { RealTerrain, IMAGERY_ATTRIBUTION } from './realterrain.js';
 
@@ -71,6 +87,8 @@ export class World {
       r.group.position.set(0, AIRPORT_ELEV, 0);
       this.addRunway(r);
       this.buildTaxiways(); this.buildAirportBuildings(); this.buildVegetation(); this.buildTown();
+      if (this.env) this.env.decorateTerrain(this.synthTerrainMat);
+      if (this.streetMat && this.townLights) { this.townLights.material = this.streetMat; this.scene.add(this.townLights); }
       this.spawn = { x: 0, z: RWY.halfLen, heading: 0, elev: AIRPORT_ELEV, name: 'Hayali dünya · RWY 36' };
       this.parkingSpots = true;
       return;
@@ -80,6 +98,8 @@ export class World {
     const elevGuess = s.kind === 'airport' && s.airport.elev != null ? s.airport.elev * 0.3048 : 0;
     this.terrain = new RealTerrain(this.scene, this.frame, { originElev: elevGuess });
     provider = this.terrain;
+    if (this.streetMat) this.terrain.lightMat = this.streetMat;
+    if (this.env) { this.terrain.onMaterial = (m) => this.env.decorateTerrain(m); this.terrain.setNight(this.env.night); }
     this.attribution = IMAGERY_ATTRIBUTION;
     onStatus('Yükseklik verisi indiriliyor…');
     await this.terrain.preloadElevation(0, 0, 9000);
@@ -138,10 +158,55 @@ export class World {
     const sky2 = new Sky(); sky2.scale.setScalar(1000);
     Object.keys(u).forEach(k => { sky2.material.uniforms[k].value = u[k].value; });
     envScene.add(sky2);
-    envScene.add(new THREE.Mesh(new THREE.SphereGeometry(900, 32, 16, 0, Math.PI * 2, Math.PI / 2 + 0.02, Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0x3b4636, side: THREE.BackSide })));
-    this.scene.environment = pmrem.fromScene(envScene, 0.02).texture;
+    this.envGround = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 16, 0, Math.PI * 2, Math.PI / 2 + 0.02, Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0x3b4636, side: THREE.BackSide }));
+    envScene.add(this.envGround);
+    this.pmrem = pmrem; this.envScene = envScene; this.sky2 = sky2;
+    this.envRT = pmrem.fromScene(envScene, 0.02);
+    this.scene.environment = this.envRT.texture;
     this.scene.environmentIntensity = 0.85;
+    this.nightMats = [];
+  }
+
+  /** Re-renders the image-based lighting after the sun / weather changed. */
+  rebuildEnvironment(night = 0, clarity = 1) {
+    const u = this.sky.material.uniforms;
+    Object.keys(u).forEach(k => { const v = u[k].value; this.sky2.material.uniforms[k].value = v?.clone ? v.clone() : v; });
+    this.envGround.material.color.setRGB(0.23, 0.27, 0.21).multiplyScalar((1 - night * 0.92) * (0.6 + 0.4 * clarity));
+    const old = this.envRT;
+    this.envRT = this.pmrem.fromScene(this.envScene, 0.02);
+    this.scene.environment = this.envRT.texture;
+    old?.dispose();
+  }
+
+  /** Street-light glow shared by real terrain tiles and the synthetic town. */
+  attachNightLights(env) {
+    if (this.streetMat) return;
+    this.streetMat = makeGlowMat({ size: 1.4, minPx: 1.2, intensity: 0 });
+    this.glowMats.push(this.streetMat);
+    if (this.terrain) this.terrain.lightMat = this.streetMat;
+    if (this.townLights) { this.townLights.material = this.streetMat; this.scene.add(this.townLights); }
+  }
+
+  setNight(k) {
+    this.terrain?.setNight(k);
+    if (this.streetMat) this.streetMat.uniforms.intensity.value = 3.2 * smoothstep(0.15, 0.8, k);
+    for (const { mat, max } of this.nightMats) mat.emissiveIntensity = max * k;
+  }
+
+  /** Runway / taxiway surface: dry, wet (mirror-like), or snow-dusted. */
+  setSurface(kind) {
+    for (const r of this.runways) r.group.traverse(o => {
+      if (!o.isMesh || !o.material?.isMeshStandardMaterial) return;
+      const m = o.material;
+      if (m.userData.r0 === undefined) { m.userData.r0 = m.roughness; m.userData.c0 = m.color.clone(); m.userData.e0 = m.envMapIntensity; }
+      const isPaint = m.color.r > 0.8 && !m.map;
+      m.roughness = kind === 'wet' ? (isPaint ? 0.35 : 0.22) : kind === 'snow' ? 0.85 : m.userData.r0;
+      m.envMapIntensity = kind === 'wet' ? 2.2 : m.userData.e0;
+      m.color.copy(m.userData.c0);
+      if (kind === 'wet' && m.map) m.color.multiplyScalar(0.72);
+      if (kind === 'snow') m.color.lerp(new THREE.Color(0xdde3ea), m.map ? 0.35 : 0.1);
+    });
   }
 
   buildLights() {
@@ -153,7 +218,8 @@ export class World {
     sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.04;
     this.sun = sun;
     this.scene.add(sun, sun.target);
-    this.scene.add(new THREE.HemisphereLight(0xbfd6ff, 0x4a5a3a, 0.35));
+    this.hemi = new THREE.HemisphereLight(0xbfd6ff, 0x4a5a3a, 0.35);
+    this.scene.add(this.hemi);
   }
 
   followShadow(target) {
@@ -202,6 +268,7 @@ export class World {
     g.computeVertexNormals();
     const detail = canvasTex(256, (ctx, s) => noiseFill(ctx, s, 0.72, 1.0, [1, 1, 1], 7, 0.25));
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, map: detail, roughness: 0.96, metalness: 0 });
+    this.synthTerrainMat = mat;
     mat.onBeforeCompile = (sh) => {
       sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', `
         #ifdef USE_MAP
@@ -257,6 +324,8 @@ export class World {
     });
     facade.repeat.set(12, 2);
     const termMat = new THREE.MeshStandardMaterial({ map: facade, roughness: 0.6, metalness: 0.2 });
+    termMat.emissiveMap = windowGlow(256, 8, 4); termMat.emissiveMap.repeat.set(12, 2); termMat.emissive.setRGB(1, 0.85, 0.6); termMat.emissiveIntensity = 0;
+    this.nightMats.push({ mat: termMat, max: 1.6 });
     const roofMat = new THREE.MeshStandardMaterial({ color: 0x8d9298, roughness: 0.8 });
     const term = new THREE.Mesh(new THREE.BoxGeometry(60, 22, 520), [termMat, termMat, roofMat, roofMat, termMat, termMat]);
     term.position.set(500, E + 11, 0); term.castShadow = term.receiveShadow = true; grp.add(term);
@@ -316,7 +385,10 @@ export class World {
       ctx.fillStyle = '#d6d2c8'; ctx.fillRect(0, 0, s, s);
       for (let y = 0; y < 8; y++) for (let x = 0; x < 4; x++) { ctx.fillStyle = '#3a4656'; ctx.fillRect(x * 32 + 8, y * 16 + 4, 16, 9); }
     });
-    const N = 1400, mesh = new THREE.InstancedMesh(g, new THREE.MeshStandardMaterial({ map: facade, roughness: 0.75 }), N);
+    const townMat = new THREE.MeshStandardMaterial({ map: facade, roughness: 0.75, emissiveMap: windowGlow(128, 4, 8, 0.45), emissive: new THREE.Color(1, 0.8, 0.5), emissiveIntensity: 0 });
+    this.nightMats.push({ mat: townMat, max: 1.3 });
+    const lights = [];
+    const N = 1400, mesh = new THREE.InstancedMesh(g, townMat, N);
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), col = new THREE.Color();
     let n = 0;
     for (const [cx, cz, r] of [[5200, -4200, 1500], [-4800, 3500, 1100], [2500, 7500, 900]]) {
@@ -328,10 +400,12 @@ export class World {
         p.set(Math.round(x / 30) * 30, h - 1, Math.round(z / 30) * 30); q.identity();
         s.set(12 + rnd() * 20, 6 + rnd() * 14 + Math.pow(tall, 3) * rnd() * 70, 10 + rnd() * 20);
         m4.compose(p, q, s); mesh.setMatrixAt(n, m4);
+        for (let k = 0; k < 3; k++) lights.push({ p: [p.x + (rnd() - 0.5) * 40, p.y + 7, p.z + (rnd() - 0.5) * 40], c: rnd() < 0.7 ? [1, 0.6, 0.22] : [1, 0.93, 0.8] });
         col.setHSL(0.08 + rnd() * 0.05, 0.1 + rnd() * 0.15, 0.6 + rnd() * 0.35); mesh.setColorAt(n, col); n++;
       }
     }
     mesh.count = n; mesh.receiveShadow = true; mesh.frustumCulled = false;
+    this.townLights = makePts(lights, null);
     this.scene.add(mesh);
   }
 

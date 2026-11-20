@@ -21,13 +21,17 @@ const _q = new THREE.Quaternion(), _qi = new THREE.Quaternion();
 const UP = new THREE.Vector3(0, 1, 0);
 
 export class FlightModel {
-  constructor({ gearPoints, hardPoints }) {
+  constructor({ gearPoints, hardPoints, spec = {}, enginePos = null }) {
     // airframe
-    this.mass = 66000;
-    this.S = 124.6; this.b = 34.32; this.cbar = 4.17;
-    this.I = new THREE.Vector3(3.9e6, 5.6e6, 1.9e6);    // pitch, yaw, roll
-    this.maxThrust = 121400;                             // N per engine (CFM56-7B27)
-    this.enginePos = [new THREE.Vector3(-4.8, -1.3, -4.3), new THREE.Vector3(4.8, -1.3, -4.3)];
+    // airframe (defaults: 737-900); inertia scaled from the 737 by mass x span^2
+    this.mass = spec.mass || 66000;
+    this.S = spec.S || 124.6; this.b = spec.b || 34.32; this.cbar = this.S / this.b;
+    const k = (this.mass / 66000) * (this.b / 34.32) ** 2;
+    this.I = new THREE.Vector3(3.9e6 * k, 5.6e6 * k, 1.9e6 * k);    // pitch, yaw, roll
+    this.maxThrust = spec.thrust || 121400;                          // N per engine
+    this.enginePos = (enginePos && enginePos.length ? enginePos : [new THREE.Vector3(-0.14 * this.b, -1.3, -4.3), new THREE.Vector3(0.14 * this.b, -1.3, -4.3)]).map(v => v.clone());
+    this.nEng = this.enginePos.length;
+    this.speedScale = Math.sqrt((this.mass / this.S) / (66000 / 124.6));
 
     // aero coefficients
     this.c = {
@@ -46,6 +50,8 @@ export class FlightModel {
     this.wind = new THREE.Vector3();
     this.setWind(340, 6);
     this.turbulence = 0.6;     // 0..1 scale
+    this.isaDev = 0;           // °C deviation from ISA (cold air is denser)
+    this.surfaceMu = 1;        // runway friction factor: 1 dry, ~0.6 wet, ~0.35 snow
     this.inCloud = 0;
 
     this.ctl = { elevator: 0, aileron: 0, rudder: 0, throttle: 0, brake: 0, parkingBrake: true,
@@ -63,7 +69,7 @@ export class FlightModel {
   }
 
   resetCommon() {
-    this.n1 = [20.5, 20.5];
+    this.n1 = Array(this.nEng).fill(20.5);
     this.flapPos = FLAP_DETENTS[this.ctl.flapIndex];
     this.slatPos = this.flapPos > 0 ? 1 : 0;
     this.gearPos = this.ctl.gearDown ? 1 : 0;
@@ -97,7 +103,7 @@ export class FlightModel {
     this.ctl.reverse = false; this.ctl.spoilers = 0;
     this.resetCommon();
     const V = speedKt / MS2KT, gamma = gammaDeg * D2R;
-    const rho = isaDensity(y);
+    const rho = this.density(y);
     const qS = 0.5 * rho * V * V * this.S;
     const flapN = this.flapPos / 40;
     const CLreq = this.mass * G * Math.cos(gamma) / qS;
@@ -119,15 +125,17 @@ export class FlightModel {
     const CD = this.c.CD0 + this.c.K * CL * CL + 0.09 * Math.pow(flapN, 1.2) + 0.022 * (gearDown ? 1 : 0);
     const Treq = Math.max(0, qS * CD + this.mass * G * Math.sin(gamma));
     const mach = V / speedOfSound(y);
-    const per = Treq / (2 * this.maxThrust * Math.pow(rho / 1.225, 0.8) * (1 - 0.38 * mach + 0.12 * mach * mach));
+    const per = Treq / (this.nEng * this.maxThrust * Math.pow(rho / 1.225, 0.8) * (1 - 0.38 * mach + 0.12 * mach * mach));
     const xx = Math.pow(clamp((per - 0.035) / 0.965, 0, 1), 1 / 1.8);
     const n1 = 19 + 81 * xx;
-    this.n1 = [n1, n1];
+    this.n1 = Array(this.nEng).fill(n1);
     this.ctl.throttle = clamp((n1 - 20.5) / 77.5, 0, 1);
     this.airborneTime = 10;
   }
 
   // ---------------------------------------------------------------- helpers
+  /** Air density with the temperature deviation from ISA (same pressure, different temperature). */
+  density(h) { const T = Math.max(216.65, 288.15 - 0.0065 * h); return isaDensity(h) * T / Math.max(150, T + this.isaDev); }
   get heading() { const f = _v.set(0, 0, -1).applyQuaternion(this.quat); return (Math.atan2(f.x, -f.z) / D2R + 360) % 360; }
   get euler() { return new THREE.Euler().setFromQuaternion(this.quat, 'YXZ'); }  // x pitch(+up), y yaw, z roll(+left)
   get agl() { return this.pos.y + Math.min(...this.gearPoints.map(g => g.p.y)) - groundHeight(this.pos.x, this.pos.z); }
@@ -161,7 +169,7 @@ export class FlightModel {
     const revActive = this.reverserPos > 0.9;
     const thr = (ctl.reverse && !revActive) ? 0 : ctl.throttle;
     const n1Target = 20.5 + (revActive ? 0.75 : 1.0) * 77.5 * thr;
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < this.nEng; i++) {
       const d = n1Target - this.n1[i];
       const r = d > 0 ? (this.n1[i] < 50 ? 4.5 : 9) : 12;     // slow spool from idle
       this.n1[i] += clamp(d * 0.9, -r, r) * dt;
@@ -169,8 +177,8 @@ export class FlightModel {
 
     // ---------- atmosphere / air data
     const alt = this.pos.y;
-    const rho = isaDensity(alt);
-    const a = speedOfSound(alt);
+    const rho = this.density(alt);
+    const a = speedOfSound(alt) * Math.sqrt(Math.max(0.8, 1 + this.isaDev / 288.15));
     const agl = Math.max(0, alt - groundHeight(this.pos.x, this.pos.z));
     // wind with boundary layer and turbulence
     const bl = Math.pow(clamp((agl + 5) / 400, 0.15, 1), 0.25);
@@ -252,7 +260,7 @@ export class FlightModel {
     // ---------- thrust
     const dens = Math.pow(rho / 1.225, 0.8);
     const lapse = 1 - 0.38 * this.mach + 0.12 * this.mach * this.mach;
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < this.nEng; i++) {
       const x = clamp((this.n1[i] - 19) / 81, 0, 1);
       let T = this.maxThrust * dens * lapse * (0.035 + 0.965 * Math.pow(x, 1.8));
       if (this.reverserPos > 0.05) T *= lerp(1, -0.42, this.reverserPos);
@@ -292,11 +300,12 @@ export class FlightModel {
       const right = new THREE.Vector3(-dir.z, 0, dir.x);   // dir x up
       const vLong = vp.x * dir.x + vp.z * dir.z;
       const vLat = vp.x * right.x + vp.z * right.z;
-      const muLat = opts.muLat ?? 0.75;
+      const surf = opts.hard ? 1 : this.surfaceMu;
+      const muLat = (opts.muLat ?? 0.75) * (0.55 + 0.45 * surf);
       const Flat = -clamp(vLat * 5, -1, 1) * muLat * Fn;
       const brake = opts.brake ?? 0;
       const roll = opts.roll ?? 0.012;
-      const Flong = -Math.tanh(vLong * 2.5) * (roll + brake * 0.55) * Fn;
+      const Flong = -Math.tanh(vLong * 2.5) * (roll + brake * 0.55 * surf) * Fn;
       const F = new THREE.Vector3(0, Fn, 0).addScaledVector(dir, Flong).addScaledVector(right, Flat);
       Fw.add(F);
       Mw.add(new THREE.Vector3().copy(r).cross(F));
@@ -321,7 +330,7 @@ export class FlightModel {
     });
 
     for (const hp of this.hardPoints) {
-      const res = contactAt(hp.p, 3e6, 3e5, { muLat: 0.6, roll: 0.5 });
+      const res = contactAt(hp.p, 3e6, 3e5, { muLat: 0.6, roll: 0.5, hard: true });
       if (res) {
         anyContact = true;
         if (hp.fatal) this.crash(hp.name === 'belly' ? 'Gövde üstü iniş — takımlar kapalıydı' : 'Çarpışma: ' + hp.label);

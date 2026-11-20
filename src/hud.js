@@ -34,18 +34,36 @@ export class HUD {
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     g.clearRect(0, 0, this.w, this.h);
     this.fps += (1 / Math.max(dt, 1e-3) - this.fps) * 0.05;
-    if (!this.visible) return;
+    if (!this.visible) { this.layout?.syncHandles(false); return; }
     const compact = this.w < 900;
     const s = compact ? 0.72 : Math.min(1.15, Math.max(0.85, this.h / 950));
+    const L = this.layout;
+    const at = (id, dx, dy, w, h, tip) => (L ? L.place(id, dx, dy, w, h, tip) : [dx, dy]);
+    let [px, py] = at('pfd', 16, this.h - 16 - 300 * s, 470 * s, 300 * s, 'PFD · Ana uçuş göstergesi|Sürükle: taşı · çift tık: varsayılan yer');
     g.save();
-    g.translate(16, this.h - 16 - 300 * s); g.scale(s, s);
+    g.translate(px, py); g.scale(s, s);
     this.pfd(g, fm);
     g.restore();
+    [px, py] = at('eicas', this.w - 16 - 330 * s, this.h - 16 - 300 * s, 330 * s, 300 * s, 'EICAS · Motor ve sistemler|Sürükle: taşı · çift tık: varsayılan yer');
     g.save();
-    g.translate(this.w - 16 - 330 * s, this.h - 16 - 300 * s); g.scale(s, s);
+    g.translate(px, py); g.scale(s, s);
     this.eicas(g, fm);
     g.restore();
+    // navigation / weather-radar display: between PFD and EICAS if there is room, else above the EICAS
+    if (this.nd && this.nd.visible) {
+      const left = 16 + 470 * s, right = this.w - 16 - 330 * s, ndW = 340 * s;
+      let nx, ny;
+      if (right - left >= ndW + 24) { nx = (left + right - ndW) / 2; ny = this.h - 16 - 320 * s; }
+      else { nx = this.w - 16 - ndW; ny = this.h - 16 - 300 * s - 12 - 320 * s; }
+      [nx, ny] = at('nd', nx, ny, ndW, 320 * s, 'ND · Navigasyon ve hava radarı|Sürükle: taşı · çift tık: varsayılan yer · [0] aç/kapa · [9] menzil');
+      this.nd.draw(g, nx, ny, s, fm, this.clouds, this.ap, dt);
+      this.ndRect = { x: nx, y: ny, w: ndW, h: 320 * s };
+    }
+    // info strip (camera/FPS + FIR + FIR card) as one movable block
+    const [ix, iy] = at('info', 12, 12, 380, 18, 'Bilgi şeridi · Kamera, FIR|Sürükle: taşı · çift tık: varsayılan yer');
+    g.save(); g.translate(ix - 12, iy - 12);
     this.topBar(g, fm, rig);
+    g.restore();
     if (this.attribution) {
       g.font = '11px "Segoe UI", sans-serif'; g.textAlign = 'center'; g.fillStyle = 'rgba(255,255,255,0.6)';
       g.fillText(this.attribution, this.w / 2, this.h - 6);
@@ -53,6 +71,7 @@ export class HUD {
     this.warnings(g, fm, dt);
     if (this.showHelp) this.help(g);
     if (fm.crashed) this.crash(g, fm);
+    this.layout?.syncHandles(true);
   }
 
   panel(g, x, y, w, h) {
@@ -203,7 +222,7 @@ export class HUD {
     // speed bands
     if (left) {
       const flapN = fm.flapPos / 40;
-      const vs = (fm.ctl.flapIndex === 0 ? 150 : 150 - 32 * Math.pow(flapN, 0.45) - 10) * Math.sqrt(fm.mass / 66000);
+      const vs = (fm.ctl.flapIndex === 0 ? 150 : 150 - 32 * Math.pow(flapN, 0.45) - 10) * (fm.speedScale || 1);
       const vmo = 340, vfe = [340, 250, 250, 250, 210, 200, 190, 175, 162][fm.ctl.flapIndex];
       const yv = (v) => mid - (v - value) * pxPer;
       g.fillStyle = C.red;
@@ -262,8 +281,10 @@ export class HUD {
     this.panel(g, 0, 0, W, H);
     const ctl = fm.ctl;
     // N1 dials
-    for (let i = 0; i < 2; i++) {
-      const cx = 72 + i * 110, cy = 72, r = 44;
+    const nE = fm.n1.length, sc = nE > 2 ? 0.6 : 1;
+    g.save(); g.scale(sc, sc);
+    for (let i = 0; i < nE; i++) {
+      const cx = (nE > 2 ? 40 + i * 64 : 72 + i * 110) / sc, cy = (nE > 2 ? 62 : 72) / sc, r = 44;
       const n1 = fm.n1[i];
       const a0 = Math.PI * 0.75, span = Math.PI * 1.25;
       g.strokeStyle = 'rgba(255,255,255,0.25)'; g.lineWidth = 6;
@@ -283,6 +304,7 @@ export class HUD {
       g.fillText(n1.toFixed(1), cx + 44, cy + 15);
       if (fm.reverserPos > 0.05) { g.fillStyle = fm.reverserPos > 0.9 ? C.green : C.amber; g.font = `bold 12px ${FONT}`; g.textAlign = 'center'; g.fillText('REV', cx, cy - 14); }
     }
+    g.restore();
     g.fillStyle = C.dim; g.font = `12px ${FONT}`; g.textAlign = 'center'; g.fillText('N1 %', 127, 130);
 
     // throttle column
@@ -329,7 +351,8 @@ export class HUD {
     g.font = `bold 12px ${FONT}`; g.textAlign = 'left';
     ann.forEach(([t, col], i) => { g.fillStyle = col; g.fillText(t, 20 + (i % 3) * 102, 262 + Math.floor(i / 3) * 18); });
     g.fillStyle = C.dim; g.font = `11px ${FONT}`;
-    g.fillText(`GW ${(fm.mass / 1000).toFixed(1)} t   WIND ${String(fm.windFrom).padStart(3, '0')}°/${fm.windKts}kt`, 20, 290);
+    const sat = fm.oat !== undefined ? Math.round(15 - 0.0065 * Math.min(fm.pos.y, 11000) + (fm.isaDev || 0)) : null;   // ISA lapse + deviation
+    g.fillText(`GW ${(fm.mass / 1000).toFixed(0)}t  WIND ${String(fm.windFrom).padStart(3, '0')}°/${fm.windKts}kt${sat !== null ? `  SAT ${sat}°C` : ''}${fm.surface && fm.surface !== 'dry' ? `  RWY ${fm.surface === 'wet' ? 'WET' : 'SNOW'}` : ''}`, 20, 290);
   }
 
   topBar(g, fm, rig) {
@@ -338,9 +361,61 @@ export class HUD {
     g.fillStyle = 'rgba(6,10,16,0.55)'; const tw = g.measureText(txt).width;
     g.beginPath(); g.roundRect(12, 12, tw + 20, 24, 6); g.fill();
     g.fillStyle = 'rgba(230,240,255,0.85)'; g.fillText(txt, 22, 28);
+    this.firStrip(g);
+  }
+
+  // ---------------------------------------------------------------- FIR
+  /** fir: current region; info: { next, km, etaMin } ahead on the track */
+  setFir(fir, ahead) { this.fir = fir; this.firAhead = ahead; }
+  showFirCard(fir, entry, title = 'FIR GİRİŞİ') { this.firCard = { fir, entry, title, t: 10 }; }
+
+  firStrip(g) {
+    if (this.fir === undefined) return;
+    const f = this.fir, a = this.firAhead;
+    g.font = `bold 12px ${FONT}`;
+    const main = f ? `FIR  ${f.id} · ${f.name.toLocaleUpperCase('en')}${f.oceanic ? ' OCEANIC' : ''}${f.country ? '  ·  ' + f.country : ''}` : 'FIR  — (bölge dışı)';
+    const nxt = a && a.next ? `→ ${a.next.id} ${a.next.name.toLocaleUpperCase('en')} · ${a.km.toFixed(0)} km${a.etaMin != null ? ' · ' + (a.etaMin < 1 ? '<1' : a.etaMin.toFixed(0)) + ' dk' : ''}` : '';
+    const w = Math.max(g.measureText(main).width, nxt ? g.measureText(nxt).width : 0) + 22;
+    g.fillStyle = 'rgba(6,10,16,0.62)'; g.beginPath(); g.roundRect(12, 42, w, nxt ? 40 : 24, 6); g.fill();
+    g.fillStyle = C.cyan; g.textAlign = 'left'; g.fillText(main, 22, 58);
+    if (nxt) { g.font = `12px ${FONT}`; g.fillStyle = C.white; g.fillText(nxt, 22, 75); }
+
+    const c = this.firCard;
+    if (!c) return;
+    c.t -= this.lastDt || 0.016;
+    if (c.t <= 0) { this.firCard = null; return; }
+    const alpha = Math.min(1, c.t / 1.2, (10 - c.t) / 0.3);
+    g.save(); g.globalAlpha = Math.max(0, alpha);
+    const x = 12, y = nxt ? 90 : 74, W = 360;
+    const fr = c.fir, e = c.entry;
+    const rows = fr ? [
+      ['ICAO', fr.id], ['Ad', fr.name + (fr.oceanic ? ' (Oceanic)' : '')], ['Ülke', fr.country || '—'],
+      ['Bölge', [fr.region, fr.division].filter(Boolean).join(' · ') || '—'], ['UIR', fr.uir || '—'],
+      ['Giriş (UTC)', e.utc], ['Giriş', `FL${String(Math.round(e.altFt / 100)).padStart(3, '0')} · ${e.kt.toFixed(0)} kt · HDG ${String(Math.round(e.hdg)).padStart(3, '0')}°`],
+      ['Önceki', e.from ? `${e.from.id} ${e.from.name}` : '—'],
+    ] : [['Durum', 'Tanımlı bir FIR sınırının dışındasın']];
+    const H = 34 + rows.length * 19;
+    g.fillStyle = 'rgba(6,10,16,0.88)'; g.strokeStyle = C.cyan; g.lineWidth = 1.5;
+    g.beginPath(); g.roundRect(x, y, W, H, 8); g.fill(); g.stroke();
+    g.fillStyle = C.cyan; g.font = `bold 13px ${FONT}`; g.fillText(`${c.title}${fr ? ' · ' + fr.id : ''}`, x + 12, y + 20);
+    g.font = `12px ${FONT}`;
+    rows.forEach(([k, v], i) => { g.fillStyle = C.dim; g.fillText(k, x + 12, y + 40 + i * 19); g.fillStyle = C.white; g.fillText(String(v).slice(0, 38), x + 110, y + 40 + i * 19); });
+    g.restore();
+  }
+
+  /** Top of the free area below anything docked at the top centre (the autopilot MCP). */
+  topInset() {
+    let y = 46;
+    const mcp = document.getElementById('mcp');
+    if (mcp && mcp.style.display !== 'none') {
+      const r = mcp.getBoundingClientRect();
+      if (r.height > 0 && r.top < this.h / 2) y = Math.max(y, r.bottom + 12);
+    }
+    return y;
   }
 
   warnings(g, fm, dt) {
+    const top = this.topInset() + 24;
     const warn = [];
     const ra = fm.agl * M2FT, vs = fm.vel.y * 60 * M2FT, ias = fm.ias * MS2KT;
     if (fm.stall > 0.05 && !fm.onGround) warn.push(['STALL', C.red]);
@@ -354,7 +429,7 @@ export class HUD {
     g.textAlign = 'center'; g.font = `bold 22px ${FONT}`;
     const blink = (performance.now() % 700) < 450;
     warn.forEach(([t, col], i) => {
-      const y = 70 + i * 34; const w = g.measureText(t).width + 30;
+      const y = top + i * 34; const w = g.measureText(t).width + 30;
       g.fillStyle = 'rgba(0,0,0,0.6)'; g.fillRect(this.w / 2 - w / 2, y - 22, w, 30);
       g.strokeStyle = col; g.lineWidth = 2; g.strokeRect(this.w / 2 - w / 2, y - 22, w, 30);
       g.fillStyle = (col === C.red && !blink) ? 'rgba(255,59,48,0.5)' : col; g.fillText(t, this.w / 2, y);
@@ -363,7 +438,7 @@ export class HUD {
     this.msgs.forEach(m => (m.t -= dt));
     this.msgs = this.msgs.filter(m => m.t > 0);
     g.font = `bold 16px ${FONT}`;
-    const by = 70 + warn.length * 34 + 16;
+    const by = top + warn.length * 34 + 16;
     this.msgs.forEach((m, i) => {
       g.globalAlpha = Math.min(1, m.t * 2);
       const w = g.measureText(m.text).width + 26, y = by + i * 28;
@@ -379,7 +454,7 @@ export class HUD {
       ['R/F  PgUp/PgDn', 'Gaz'], ['X / Z', 'Flap aç / topla (0-1-2-5-10-15-25-30-40)'], ['G', 'İniş takımı'],
       ['Space / B', 'Fren (basılı tut)'], ['P', 'Park freni'], ['L', 'Spoiler / hava freni'], ['T', 'Ters itki (yerde)'],
       ['[ / ]', 'Stab trim · Y: oto-trim'], ['C / 1-5', 'Kamera · fare sürükle: bakış · teker: zoom'],
-      ['K / J', 'Piste dön / iniş yaklaşmasına başla'], ['N', 'Haritayı aç (başka havalimanı / nokta)'], ['V', 'Mini harita aç / kapa (sağ üst)'], ['O', 'Canlı yansıma aç / kapa (performans)'], ['I / Shift+I', 'Otopilot / otomatik gaz (üstteki MCP paneli)'], ['Esc', 'Duraklat'], ['U', 'HUD gizle'], ['M', 'Ses aç/kapa'],
+      ['K / J', 'Piste dön / iniş yaklaşmasına başla'], ['N', 'Haritayı aç (başka havalimanı / nokta)'], ['V', 'Mini harita aç / kapa (sağ üst)'], ['0 / 9', 'Radar (ND) aç/kapa · menzil 10-160 NM'], ['8', 'Bulunduğun FIR bilgi kartı'], ['6 / Shift+6', 'Saati ±1 saat değiştir'], ['7', 'Hava durumunu değiştir (açık → parçalı → yağmur → fırtına → kar)'], ['O', 'Canlı yansıma aç / kapa (performans)'], ['I / Shift+I', 'Otopilot / otomatik gaz (üstteki MCP paneli)'], ['Esc', 'Duraklat'], ['U', 'HUD gizle'], ['Shift+U', 'Panel yerleşimini sıfırla (paneller üst kenarından sürüklenir)'], ['M', 'Ses aç/kapa'],
       ['', ''], ['Kalkış', 'P (fren bırak) → R ile tam gaz → ~145 kt\'da S ile çek → G takım → Z flapları topla'],
       ['İniş', 'J ile başla: ~140 kt, PAPI 2 beyaz 2 kırmızı, 50 ft\'te gazı kes, yere değince T + Space'],
     ];

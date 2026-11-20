@@ -8,6 +8,9 @@ import { smoothstep, clamp, lerp } from './noise.js';
 
 const ELEV_URL = (z, x, y) => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
 const IMG_URL = (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
+// NASA VIIRS Black Marble night lights (500 m, max zoom 8)
+const NIGHT_URL = (z, x, y) => `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/default/GoogleMapsCompatible_Level8/${z}/${y}/${x}.png`;
+const NIGHT_Z = 8;
 export const IMAGERY_ATTRIBUTION = 'Uydu: Esri, Maxar, Earthstar Geographics · Yükseklik: Mapzen/AWS Terrain Tiles · Havalimanları: OurAirports';
 
 const EZ_MAX = 12;      // elevation zoom (≈30 m/px at mid latitudes)
@@ -60,6 +63,11 @@ export class RealTerrain {
     this.active = 0; this.pending = new Map(); this.frameNo = 0; this.readyCount = 0;
     this.texLoader = new THREE.TextureLoader(); this.texLoader.setCrossOrigin('anonymous');
     this.fallbackMat = new THREE.MeshStandardMaterial({ color: 0x5d6b4a, roughness: 1 });
+    this.night = new Map();           // key -> { tex, px } Black Marble tiles
+    this.nightK = 0;                  // 0 day .. 1 night (emissive city glow)
+    this.mats = new Set();
+    this.onMaterial = null;           // hook(mat) for weather (snow) decoration
+    this.lightMat = null;             // glow material for street lights (set by World)
     // root tiles covering the region
     const ll0 = frame.toLatLon(-radius, -radius), ll1 = frame.toLatLon(radius, radius);
     const x0 = Math.floor(lonToTX(ll0.lon, ROOT_Z)), x1 = Math.floor(lonToTX(ll1.lon, ROOT_Z));
@@ -160,9 +168,11 @@ export class RealTerrain {
     const { z, x, y } = tile;
     const ez = Math.min(z, EZ_MAX), sh = z - ez;
     const ex = x >> sh, ey = y >> sh;
-    const [ed, tex] = await Promise.all([
+    const nz = Math.min(z, NIGHT_Z), ns = z - nz;
+    const [ed, tex, night] = await Promise.all([
       this.loadElev(ez, ex, ey),
       this.texLoader.loadAsync(IMG_URL(z, x, y)).catch(() => null),
+      this.loadNight(nz, x >> ns, y >> ns),
     ]);
     if (tile.state !== 'loading') { tex?.dispose(); return; }   // evicted meanwhile
     const N = GRID + 1, scale = 1 / 2 ** sh;
@@ -228,10 +238,92 @@ export class RealTerrain {
       tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
       mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 1, metalness: 0, color: 0xf2f2f2 });
     }
+    // city glow: the Black Marble tile (or the part of it under this tile) as emissive map
+    if (night && mat !== this.fallbackMat) {
+      const n = 2 ** ns, ix = x - ((x >> ns) << ns), iy = y - ((y >> ns) << ns);
+      const et = night.tex.clone();
+      et.repeat.set(1 / n, 1 / n); et.offset.set(ix / n, 1 - (iy + 1) / n); et.needsUpdate = true;
+      mat.emissiveMap = et; mat.emissive.setRGB(1.0, 0.78, 0.5); mat.emissiveIntensity = this.nightK * 2.4;
+      this.mats.add(mat);
+    }
+    if (mat !== this.fallbackMat) this.onMaterial?.(mat);
     const mesh = new THREE.Mesh(g, mat);
     mesh.receiveShadow = true; mesh.visible = false; mesh.matrixAutoUpdate = false;
+    // individual street lights where the night-lights data is bright (detailed tiles only)
+    if (night && this.lightMat && z >= 12 && z <= 15) {
+      const pts = this.streetLights(tile, night, ns, H, N);
+      if (pts) mesh.add(pts);
+    }
     tile.mesh = mesh; tile.state = 'ready'; this.readyCount++;
     this.group.add(mesh);
+  }
+
+  loadNight(z, x, y) {
+    const k = ekey(z, x, y);
+    let e = this.night.get(k);
+    if (e) return e.promise;
+    e = { promise: null };
+    this.night.set(k, e);
+    e.promise = (async () => {
+      try {
+        const r = await fetch(NIGHT_URL(z, x, y), { mode: 'cors' });
+        if (!r.ok) throw new Error(r.status);
+        const bmp = await createImageBitmap(await r.blob());
+        const c = document.createElement('canvas'); c.width = c.height = 256;
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(bmp, 0, 0, 256, 256);
+        const px = ctx.getImageData(0, 0, 256, 256).data;
+        const tex = new THREE.CanvasTexture(c);
+        tex.colorSpace = THREE.SRGBColorSpace; tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+        return { tex, px };
+      } catch { return null; }
+    })();
+    return e.promise;
+  }
+
+  /** Scatters glowing points proportional to the night-light radiance inside the tile. */
+  streetLights(tile, night, ns, H, N) {
+    const n = 2 ** ns, ix = tile.x - ((tile.x >> ns) << ns), iy = tile.y - ((tile.y >> ns) << ns);
+    const px0 = ix * 256 / n, py0 = iy * 256 / n, span = 256 / n;           // sub-rect in Black Marble pixels
+    const areaKm2 = ((tile.maxX - tile.minX) * (tile.maxZ - tile.minZ)) / 1e6;
+    const S = 20, cellKm2 = areaKm2 / (S * S);
+    let seed = (tile.x * 73856093) ^ (tile.y * 19349663) ^ (tile.z * 83492791);
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) | 0; return ((seed >>> 0) / 4294967296); };
+    const pos = [], col = [];
+    for (let j = 0; j < S && pos.length < 6000; j++) for (let i = 0; i < S; i++) {
+      const bx = Math.min(255, Math.floor(px0 + (i + 0.5) / S * span)), by = Math.min(255, Math.floor(py0 + (j + 0.5) / S * span));
+      const p = night.px, o = (by * 256 + bx) * 4;
+      const b = Math.max(0, (0.3 * p[o] + 0.55 * p[o + 1] + 0.15 * p[o + 2]) / 255 - 0.12) / 0.88;
+      if (b <= 0.02) continue;
+      let count = Math.pow(b, 1.6) * 1100 * cellKm2;
+      count = Math.floor(count) + (rnd() < count % 1 ? 1 : 0);
+      for (let k = 0; k < count; k++) {
+        const fx = (i + rnd()) / S, fy = (j + rnd()) / S;
+        // height from the tile grid (bilinear)
+        const gx = fx * (N - 1), gy = fy * (N - 1), x0 = Math.floor(gx), y0 = Math.floor(gy), x1 = Math.min(x0 + 1, N - 1), y1 = Math.min(y0 + 1, N - 1);
+        const u = gx - x0, v = gy - y0;
+        const h = (H[y0 * N + x0] * (1 - u) + H[y0 * N + x1] * u) * (1 - v) + (H[y1 * N + x0] * (1 - u) + H[y1 * N + x1] * u) * v;
+        const wx = tile.minX + fx * (tile.maxX - tile.minX), wz = tile.minZ + fy * (tile.maxZ - tile.minZ);
+        if (h <= 0.5) continue;                                                  // no lights on water
+        pos.push(wx, h + 4, wz);
+        const w = rnd();
+        if (w < 0.62) col.push(1.0, 0.6, 0.22); else if (w < 0.92) col.push(1.0, 0.92, 0.78); else col.push(0.75, 0.85, 1.0);
+      }
+    }
+    if (!pos.length) return null;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    const pts = new THREE.Points(g, this.lightMat);
+    pts.frustumCulled = false;
+    return pts;
+  }
+
+  /** 0 (day) .. 1 (night): city glow on the imagery. */
+  setNight(k) {
+    if (Math.abs(k - this.nightK) < 0.01) return;
+    this.nightK = k;
+    for (const m of this.mats) m.emissiveIntensity = k * 2.4;
   }
 
   request(tile, prio) {
@@ -244,7 +336,11 @@ export class RealTerrain {
     if (tile.mesh) {
       this.group.remove(tile.mesh);
       tile.mesh.geometry.dispose();
-      if (tile.mesh.material !== this.fallbackMat) { tile.mesh.material.map?.dispose(); tile.mesh.material.dispose(); }
+      if (tile.mesh.material !== this.fallbackMat) {
+        tile.mesh.material.map?.dispose(); tile.mesh.material.emissiveMap?.dispose();
+        this.mats.delete(tile.mesh.material); tile.mesh.material.dispose();
+      }
+      tile.mesh.children.forEach(c => c.geometry?.dispose());
       tile.mesh = null; this.readyCount--;
     }
     tile.state = 'none';

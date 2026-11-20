@@ -175,7 +175,7 @@ export class Autopilot {
         vsT = Math.max(-750, -(agl * 9 + 90));
       }
       // envelope protection: never trade below a safe speed for climb
-      const vMin = (fm.ctl.flapIndex === 0 ? 210 : 150 - 4 * fm.ctl.flapIndex);
+      const vMin = (fm.ctl.flapIndex === 0 ? 210 : 150 - 4 * fm.ctl.flapIndex) * (fm.speedScale || 1);
       if (this.vert !== 'FLARE' && ias < vMin && vsT > 0) vsT *= clamp((ias - (vMin - 25)) / 25, 0, 1);
 
       const V = Math.max(fm.tas, 40);

@@ -1,4 +1,8 @@
 import * as L from '/node_modules/leaflet/dist/leaflet-src.esm.js';
+import { FLEET, fleetById, speedScale } from './fleet.js';
+import { AircraftPreview } from './preview.js';
+import { tips } from './tooltip.js';
+import { WEATHER, WEATHER_IDS, hourLabel } from './environment.js';
 
 // Start screen: satellite map with airports, search, runway / mode selection, free-flight point.
 
@@ -54,14 +58,63 @@ export class Menu {
     this.el('btnFree').onclick = () => this.free && this.start({ kind: 'free', lat: this.free.lat, lon: this.free.lng }, 'free');
     this.el('btnSynth').onclick = () => this.start({ kind: 'synthetic' }, 'to');
 
+    // aircraft picker
+    const sel = this.el('acSel');
+    const cats = [...new Set(FLEET.map(t => t.cat))];
+    sel.innerHTML = cats.map(c => `<optgroup label="${esc(c)}">${FLEET.filter(t => t.cat === c)
+      .map(t => `<option value="${t.id}">${esc(t.name)} · ${esc(t.airline)}</option>`).join('')}</optgroup>`).join('');
+    sel.addEventListener('change', () => this.setAircraft(sel.value));
+    sel.addEventListener('keydown', e => e.stopPropagation());
+    this.preview = new AircraftPreview(this.el('acView'), this.el('acCap'));
+    tips(root, {
+      '#btnTO': 'Pistten kalkış|Seçili pistin başında, park freni çekili başlar. [P] ile freni bırak, [R] ile gaz ver.',
+      '#btnAPP': 'İniş yaklaşması|Seçili piste 9 km finalden, 3° süzülüş yolunda, flaps 30 ve takımlar açık başlar.',
+      '#btnFree': 'Buradan uç|Haritada tıkladığın noktada 4000 ft yükseklikte, 250 kt hızla havada başlar.',
+      '#btnSynth': 'Hayali dünya|İnternet gerektirmeyen prosedürel arazi ve hayali bir havalimanı.',
+      '#acSel': 'Uçak tipi|Her tipin ağırlığı, kanadı, itkisi ve kalkış/yaklaşma hızları farklıdır.',
+      '#search': 'Havalimanı ara|ICAO (LTFM), IATA (IST), şehir ya da ad yaz; [Enter] ilk sonucu seçer.',
+      '#map': 'Harita|Mavi noktalar havalimanları. Bir noktaya tıklayınca seçilir; boş bir yere tıklarsan serbest uçuş noktası olur.',
+    });
+    this.setAircraft(load('skyview.ac', 'b739'));
+
+    // time of day + weather
+    const hr = this.el('hourSel'), wx = this.el('wxSel');
+    wx.innerHTML = WEATHER_IDS.map(id => `<option value="${id}">${esc(WEATHER[id].label)}</option>`).join('');
+    const env = load('skyview.env', { hour: 14, weather: 'scattered' });
+    this.setEnv(env.hour, env.weather);
+    hr.addEventListener('input', () => this.setEnv(+hr.value, this.weather));
+    wx.addEventListener('change', () => this.setEnv(this.hour, wx.value));
+    [hr, wx].forEach(el => el.addEventListener('keydown', e => e.stopPropagation()));
+    tips(root, {
+      '#hourSel': 'Gün saati|Yerel saat: güneşin yüksekliği ve yönü buna göre. Gece şehir, pist ve uçak ışıkları yanar. Uçuşta [6] / [Shift]+[6] ile ±1 saat.',
+      '#wxSel': 'Hava durumu|Bulutlar, yağış, rüzgâr, türbülans, sıcaklık ve pist yüzeyi (ıslak/karlı pistte fren daha zayıf). Uçuşta [7] ile değiştir.',
+    });
+
     const last = load('skyview.last', { icao: 'LTFM', rw: 4, end: 'he' });
     const a = airports.find(x => x.icao === last.icao) || airports.find(x => x.icao === 'LTFM') || airports[0];
     this.select(a, last.icao === a.icao ? last.rw : 0, last.icao === a.icao ? last.end : 'le', false);
   }
 
+  setEnv(hour, weather) {
+    this.hour = Math.max(0, Math.min(23.99, hour)); this.weather = WEATHER[weather] ? weather : 'scattered';
+    this.el('hourSel').value = this.hour; this.el('wxSel').value = this.weather;
+    this.el('hourLbl').textContent = hourLabel(this.hour);
+    save('skyview.env', { hour: this.hour, weather: this.weather });
+  }
+
+  setAircraft(id) {
+    const t = fleetById(id);
+    this.acId = t.id;
+    this.el('acSel').value = t.id;
+    const nEng = t.id === 'b748' ? 4 : 2;
+    this.el('acInfo').textContent = `${(t.mass / 1000).toFixed(0)} t · açıklık ${t.b} m · ${nEng} × ${(t.thrust / 1000).toFixed(0)} kN · Vapp ≈ ${Math.round(145 * speedScale(t))} kt`;
+    save('skyview.ac', t.id);
+    this.preview?.show(t);
+  }
+
   setReady(ok) { this.ready = ok; this.root.querySelectorAll('.go').forEach(b => { b.disabled = !ok || (b.id === 'btnFree' && !this.free); }); }
   setStatus(t) { this.el('status').textContent = t; }
-  show(v) { this.root.style.display = v ? 'flex' : 'none'; if (v) setTimeout(() => this.map.invalidateSize(), 50); }
+  show(v) { this.preview?.setActive(v); this.root.style.display = v ? 'flex' : 'none'; if (v) setTimeout(() => this.map.invalidateSize(), 50); }
 
   select(a, rwIndex = null, end = null, fly = true) {
     this.sel = a;
@@ -81,7 +134,7 @@ export class Menu {
     const a = this.sel, box = this.el('runways');
     box.innerHTML = a.rw.flatMap((r, i) => ['le', 'he'].map(e => {
       const id = r[e].id, on = i === this.rwIndex && e === this.end;
-      return `<button class="rw${on ? ' on' : ''}" data-i="${i}" data-e="${e}">RWY ${esc(id)}<small>${r.len} m × ${r.wid} m</small></button>`;
+      return `<button class="rw${on ? ' on' : ''}" data-i="${i}" data-e="${e}" data-tip="RWY ${esc(id)}|${r.len} m uzunluk, ${r.wid} m genişlik. Bu uçtan ${e === 'le' ? r.he.id : r.le.id} yönüne doğru kalkış veya bu uca iniş.">RWY ${esc(id)}<small>${r.len} m × ${r.wid} m</small></button>`;
     })).join('');
     box.querySelectorAll('button').forEach(b => b.onclick = () => { this.rwIndex = +b.dataset.i; this.end = b.dataset.e; this.renderRunways(); });
     this.rwLayer.clearLayers();
@@ -117,13 +170,19 @@ export class Menu {
 export const MENU_HTML = `
 <div class="card wide">
   <div class="head">
-    <div><h1>SkyView</h1><div class="sub">Boeing 737-900 · Türk Hava Yolları · gerçek dünya uydu arazisi</div></div>
+    <div><h1>SkyView</h1><div class="sub">10 uçak tipi · gerçek dünya uydu arazisi · otopilot</div></div>
     <button id="btnSynth" class="alt go small" disabled>Hayali dünya (çevrimdışı)</button>
   </div>
   <div class="grid">
     <div id="map"></div>
     <div class="side">
       <div class="searchbox"><input id="search" placeholder="Havalimanı ara: LTFM, IST, Antalya, Heathrow…" autocomplete="off" /><ul id="results"></ul></div>
+      <div class="lbl">Saat ve hava</div>
+      <div class="envrow"><input type="range" id="hourSel" min="0" max="23.5" step="0.5"><span id="hourLbl"></span></div>
+      <select id="wxSel"></select>
+      <div class="lbl">Uçak</div>
+      <div><select id="acSel"></select><div id="acInfo" class="acinfo"></div></div>
+      <div class="acview"><canvas id="acView"></canvas><div id="acCap"></div><span class="achint">sürükle · tekerle yakınlaş</span></div>
       <div id="apt"></div>
       <div class="lbl">Pist ve yön</div>
       <div id="runways"></div>

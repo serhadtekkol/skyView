@@ -36,6 +36,33 @@ export class Sound {
     this.noiseSrc = src;
   }
 
+  /** Rain hiss on the airframe (0..~1.6). */
+  setRain(k) {
+    if (!this.ctx) return;
+    if (!this.rainG) {
+      const f = this.ctx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 1800;
+      this.rainG = this.ctx.createGain(); this.rainG.gain.value = 0;
+      this.noiseSrc(1.7).connect(f).connect(this.rainG).connect(this.master);
+    }
+    this.rainG.gain.setTargetAtTime(Math.min(0.35, k * 0.22), this.ctx.currentTime, 0.4);
+  }
+
+  /** Thunder: delayed by the speed of sound, deeper and quieter with distance. */
+  thunder(distM) {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime + Math.min(distM / 340, 25);
+    const src = ctx.createBufferSource(); src.buffer = this.noiseBuf || (this.noiseBuf = (() => {
+      const b = ctx.createBuffer(1, ctx.sampleRate * 4, ctx.sampleRate), d = b.getChannelData(0);
+      let v = 0; for (let i = 0; i < d.length; i++) { v = 0.985 * v + 0.015 * (Math.random() * 2 - 1); d[i] = v * 6; }
+      return b;
+    })());
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = Math.max(90, 600 - distM / 60);
+    const g = ctx.createGain(); const peak = Math.max(0.08, 1.2 - distM / 25000);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + 0.08 + distM / 40000);
+    g.gain.exponentialRampToValueAtTime(peak * 0.5, t + 0.9); g.gain.exponentialRampToValueAtTime(0.0001, t + 3.8);
+    src.connect(f).connect(g).connect(this.master); src.start(t); src.stop(t + 4);
+  }
+
   toggleMute() { this.muted = !this.muted; if (this.master) this.master.gain.value = this.muted ? 0 : 0.7; return this.muted; }
 
   thump(strength = 1) {
@@ -56,7 +83,7 @@ export class Sound {
   update(fm, camMode, camDist) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime, k = 0.08;
-    const n1 = (fm.n1[0] + fm.n1[1]) / 200;
+    const n1 = fm.n1.reduce((a, b) => a + b, 0) / (100 * fm.n1.length);
     const inside = camMode === 1 || camMode === 2;
     const distAtt = inside ? 0.35 : Math.min(1, 60 / Math.max(camDist, 20));
     const set = (p, v) => p.setTargetAtTime(v, t, k);
@@ -80,8 +107,8 @@ export class Sound {
     const once = (key, txt) => { if (!this.calls.has(key)) { this.calls.add(key); this.say(txt); } };
     if (fm.onGround && fm.vel.dot(new (fm.vel.constructor)(0, 0, -1).applyQuaternion(fm.quat)) > 0) {
       if (kt > 80 && fm.ctl.throttle > 0.6) once('80', 'eighty knots');
-      if (kt > 140 && fm.ctl.throttle > 0.6) once('v1', 'V one');
-      if (kt > 148 && fm.ctl.throttle > 0.6) once('vr', 'rotate');
+      if (kt > 140 * (fm.speedScale || 1) && fm.ctl.throttle > 0.6) once('v1', 'V one');
+      if (kt > 148 * (fm.speedScale || 1) && fm.ctl.throttle > 0.6) once('vr', 'rotate');
     }
     if (!fm.onGround && fm.vel.y < -0.5) {
       for (const h of [1000, 500, 100, 50, 40, 30, 20, 10]) {

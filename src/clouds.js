@@ -48,9 +48,9 @@ function cirrusTexture() {
 }
 
 export class Clouds {
-  constructor(scene, sunDir, fog, { count = 110, seed = 3, base = 1550 } = {}) {
+  constructor(scene, sunDir, fog, { count = 110, seed = 3, base = 1550, storms = 5, deck = null, rain = 0, stormNear = false } = {}) {
     this.scene = scene;
-    this.base = base;
+    this.base = base; this.deckCfg = deck; this.rain = rain;
     const rnd = mulberry32(seed);
     const puffs = [];
     this.clusters = [];
@@ -60,7 +60,8 @@ export class Clouds {
       const cx = Math.cos(ang) * dist, cz = Math.sin(ang) * dist;
       const R = 350 + rnd() * 900, H = 250 + rnd() * 650 * (R / 900);
       const cb = base + (rnd() - 0.5) * 120;
-      this.clusters.push({ x: cx, z: cz, y0: cb, y1: cb + H, r: R });
+      // radar reflectivity grows with vertical development (light showers in tall cumulus)
+      this.clusters.push({ x: cx, z: cz, y0: cb, y1: cb + H, r: R, wx: Math.max(0, (H - 350) / 900) * 0.55, storm: false });
       const n = Math.round(14 + (R / 1250) * 40);
       for (let i = 0; i < n; i++) {
         const t = Math.pow(rnd(), 1.4);                // more puffs low (flat base, towering top)
@@ -74,7 +75,27 @@ export class Clouds {
         });
       }
     }
-    // a few flat "base" puffs per cluster to darken & flatten undersides
+    // ---- storm cells (cumulonimbus): tall dark towers with an anvil, heavy rain and turbulence
+    for (let k = 0; k < storms; k++) {
+      const ang = rnd() * Math.PI * 2, dist = (stormNear && k < 3 ? 6000 : 14000) + rnd() * (stormNear && k < 3 ? 6000 : 26000);
+      const cx = Math.cos(ang) * dist, cz = Math.sin(ang) * dist;
+      const R = 1300 + rnd() * 1000, H = 4200 + rnd() * 3200;
+      const cb = base - 250 + rnd() * 150;
+      this.clusters.push({ x: cx, z: cz, y0: cb, y1: cb + H, r: R, wx: 1.6 + rnd() * 0.8, storm: true });
+      const n = 120;
+      for (let i = 0; i < n; i++) {
+        const t = i < n * 0.78 ? Math.pow(rnd(), 0.9) * 0.82 : 0.82 + rnd() * 0.18;   // column, then anvil
+        const y = t * H;
+        const prof = t < 0.82 ? 0.5 + 0.15 * Math.sin(t * 9) : 1.15 + (t - 0.82) * 2.2;   // anvil spreads
+        const rr = R * prof * Math.sqrt(rnd());
+        const a = rnd() * Math.PI * 2;
+        const size = (t < 0.82 ? 0.38 : 0.5) * R * (0.7 + rnd() * 0.6) + 200;
+        puffs.push({
+          x: cx + Math.cos(a) * rr, y: cb + y, z: cz + Math.sin(a) * rr * (t < 0.82 ? 0.85 : 0.6),
+          s: size, rot: rnd() * 6.283, shade: 0.05 + 0.8 * Math.pow(t, 1.5), a: 0.7 + rnd() * 0.25,
+        });
+      }
+    }
     this.count = puffs.length;
     this.puffs = puffs;
 
@@ -98,6 +119,7 @@ export class Clouds {
         shadowColor: { value: new THREE.Color(0.52, 0.58, 0.68) },
         fogColor: { value: fog.color },
         fogDensity: { value: fog.density },
+        flash: { value: new THREE.Vector4(0, 0, 0, 0) },
       },
       vertexShader: /* glsl */`
         attribute vec3 offset; attribute vec4 params;
@@ -120,7 +142,7 @@ export class Clouds {
           #include <logdepthbuf_vertex>
         }`,
       fragmentShader: /* glsl */`
-        uniform sampler2D map; uniform vec3 sunDir, litColor, shadowColor, fogColor; uniform float fogDensity;
+        uniform sampler2D map; uniform vec3 sunDir, litColor, shadowColor, fogColor; uniform float fogDensity; uniform vec4 flash;
         varying vec2 vUv; varying float vShade; varying float vAlpha; varying vec3 vWorld;
         #include <common>
         #include <logdepthbuf_pars_fragment>
@@ -135,6 +157,7 @@ export class Clouds {
           float lit = clamp(vShade * 0.65 + t.r * 0.55, 0.0, 1.0);
           vec3 col = mix(shadowColor, litColor, lit) + litColor * silver;
           col *= 0.92 + 0.12 * max(-mu, 0.0);                               // a little brighter down-sun
+          col += vec3(1.0, 1.0, 1.15) * flash.w * exp(-length(vWorld - flash.xyz) / 2600.0) * (0.55 + 0.45 * t.r);   // lightning
           float d = length(vWorld - cameraPosition);
           float f = 1.0 - exp(-fogDensity * fogDensity * d * d * 0.55);
           col = mix(col, fogColor, f);
@@ -164,7 +187,46 @@ export class Clouds {
     this.cirrus.position.y = 9500;
     this.cirrus.renderOrder = 4;
     scene.add(this.cirrus);
+
+    // ---- overcast deck: two textured layers (dark base, sunlit top) with whiteout in between
+    if (deck) {
+      const tex = cirrusTexture();
+      tex.repeat.set(14, 14);
+      const mk = (y, flip, color, op) => {
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(200000, 200000).rotateX(flip ? Math.PI / 2 : -Math.PI / 2),
+          new THREE.MeshBasicMaterial({ map: tex, alphaMap: null, transparent: true, opacity: op, depthWrite: false, color, fog: true }));
+        m.position.y = y; m.renderOrder = 3; scene.add(m); return m;
+      };
+      // solid-ish underlay so the deck is opaque from below, textured layer for structure
+      const under = new THREE.Mesh(new THREE.PlaneGeometry(200000, 200000).rotateX(Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0x8a9096, transparent: true, opacity: 0.92 * deck.cover, depthWrite: false, fog: true }));
+      under.position.y = deck.base; under.renderOrder = 2; scene.add(under);
+      const over = new THREE.Mesh(new THREE.PlaneGeometry(200000, 200000).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0xf2f4f7, transparent: true, opacity: 0.95 * deck.cover, depthWrite: false, fog: true }));
+      over.position.y = deck.top; over.renderOrder = 2; scene.add(over);
+      this.deck = { under, over, base: mk(deck.base - 1, true, 0x6f767d, 0.85), top: mk(deck.top + 1, false, 0xffffff, 0.8), tex };
+    }
   }
+
+  dispose() {
+    const objs = [this.mesh, this.cirrus];
+    if (this.deck) objs.push(this.deck.under, this.deck.over, this.deck.base, this.deck.top);
+    for (const o of objs) { o.parent?.remove(o); o.geometry.dispose(); o.material.map?.dispose(); o.material.dispose(); }
+  }
+
+  /** Cloud colours for the time of day / weather (linear RGB multipliers). */
+  setLighting(lit, shadow, deckLit, deckShadow) {
+    this.material.uniforms.litColor.value.copy(lit);
+    this.material.uniforms.shadowColor.value.copy(shadow);
+    this.cirrus.material.color.copy(lit).multiplyScalar(0.62);
+    if (this.deck) {
+      this.deck.over.material.color.copy(deckLit); this.deck.top.material.color.copy(deckLit);
+      this.deck.under.material.color.copy(deckShadow); this.deck.base.material.color.copy(deckShadow).multiplyScalar(0.85);
+    }
+  }
+
+  /** Lightning flash at a world position (intensity decays in update). */
+  flashAt(p, k = 2.5) { this.material.uniforms.flash.value.set(p.x, p.y, p.z, k); }
 
   writeBuffers(cam) {
     const n = this.count, P = this.puffs, D = this.dist, O = this.order;
@@ -184,6 +246,7 @@ export class Clouds {
   densityAt(pos) {
     const ox = this.drift.x * this.offsetT, oz = this.drift.z * this.offsetT;
     let d = 0;
+    if (this.deckCfg) { const k = this.deckCfg; if (pos.y > k.base - 40 && pos.y < k.top + 40) d = k.cover * Math.min(1, Math.min(pos.y - k.base + 40, k.top + 40 - pos.y) / 120); }
     for (const c of this.clusters) {
       if (pos.y < c.y0 - 30 || pos.y > c.y1 + 30) continue;
       const t = (pos.y - c.y0) / (c.y1 - c.y0);
@@ -194,8 +257,50 @@ export class Clouds {
     return d;
   }
 
+  /** Turbulence severity at a position: storm cells are ~3x rougher than fair-weather cumulus. */
+  turbAt(pos) {
+    const ox = this.drift.x * this.offsetT, oz = this.drift.z * this.offsetT;
+    let t = 0;
+    for (const c of this.clusters) {
+      const h = Math.hypot(pos.x - c.x - ox, pos.z - c.z - oz);
+      const reach = c.r * (c.storm ? 1.25 : 0.9);
+      if (h > reach || pos.y < c.y0 - 300 || pos.y > c.y1 + 200) continue;
+      const k = (1 - h / reach) * (c.storm ? 3 : 1);
+      t = Math.max(t, k);
+    }
+    return t;
+  }
+
+  /**
+   * Weather-radar reflectivity (0 .. ~2.4) at a horizontal point for a beam spanning [yLo, yHi].
+   * Rain shafts extend from the cloud base to the ground.
+   */
+  wxAt(x, z, yLo, yHi) {
+    const ox = this.drift.x * this.offsetT, oz = this.drift.z * this.offsetT;
+    let best = 0;
+    // stratiform rain under an overcast deck: weak, patchy returns
+    if (this.rain > 0 && this.deckCfg && yLo < this.deckCfg.top) {
+      const n = Math.sin(x * 0.00031 + Math.cos(z * 0.00023)) * Math.cos(z * 0.00041 - x * 0.00013);
+      best = Math.max(0, this.rain * (0.32 + 0.38 * n));
+    }
+    for (const c of this.clusters) {
+      if (c.wx <= 0.02) continue;
+      const dx = x - c.x - ox, dz = z - c.z - oz;
+      const rr = c.r * (c.storm ? 0.85 : 0.7);
+      const d2 = dx * dx + dz * dz;
+      if (d2 > rr * rr) continue;
+      if (yHi < -1e5 || yLo > c.y1 || yHi < (c.storm ? -1e9 : c.y0 - 600)) continue;   // beam misses the cell
+      const f = 1 - Math.sqrt(d2) / rr;
+      const v = c.wx * (c.storm ? Math.pow(f, 0.6) * (0.6 + 0.4 * Math.sin(dx * 0.004) * Math.cos(dz * 0.005)) : f);
+      if (v > best) best = v;
+    }
+    return best;
+  }
+
   update(dt, camera) {
     this.offsetT += dt;
+    const fl = this.material.uniforms.flash.value; if (fl.w > 0) fl.w = Math.max(0, fl.w - dt * 9);
+    if (this.deck) { this.deck.tex.offset.x = this.offsetT * 0.00015; this.deck.tex.offset.y = this.offsetT * 0.00009; }
     this.material.uniforms.fogDensity.value = this.scene.fog.density;
     if ((this.frame++ % 6) === 0) this.writeBuffers(camera.position);
     this.cirrus.material.map.offset.x = this.offsetT * 0.0004;
