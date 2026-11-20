@@ -137,12 +137,14 @@ test('ActiveRoute: fly-by sequencing happens before the waypoint', () => {
   assert.equal(s.onFinal, true);   // last leg ends at the threshold
 });
 
-test('ActiveRoute.start picks the nearest leg; OFF ROUTE beyond 5 NM', () => {
+test('ActiveRoute.start picks the nearest leg; OFF ROUTE beyond 5 NM still steers toward active waypoint', () => {
   const r = new ActiveRoute({ points: local([['A', 0, 0, 'orig'], ['B', 0, -20000], ['C', 20000, -20000, 'thr']]), crzFt: 9000, clbKt: 250, desKt: 250, crzMach: 0.6, fafFt: 3000 });
   r.start({ x: 15000, z: -19000 });
   assert.equal(r.legIndex, 1);
-  const s = r.update({ x: 10000, z: -20000 + 10000 }, 120, 90, 5000);
+  // 10 km south of leg B->C (course 090°): offRoute is true, desiredTrack must steer north (< 060° or > 300°) toward C!
+  const s = r.update({ x: 10000, z: -20000 + 10000 }, 120);
   assert.equal(s.offRoute, true);
+  assert.ok(s.desiredTrack < 60 || s.desiredTrack > 330, `expected intercept/direct-to north toward C, got ${s.desiredTrack}`);
 });
 
 test('pointAtDistFromDest walks back along the legs', () => {

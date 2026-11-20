@@ -8,6 +8,7 @@ export class Input {
     this.handlers = {};
     this.gamepadActive = false;
     window.addEventListener('keydown', (e) => {
+      if (e.target?.closest?.('input, select, textarea, #fms, #mcp, #vol')) return;
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'PageUp', 'PageDown', 'Tab'].includes(e.code)) e.preventDefault();
       if (!e.repeat) this.handlers[e.code]?.(e);
       this.keys.add(e.code);

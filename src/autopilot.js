@@ -17,6 +17,7 @@ export class Autopilot {
     this.sel = { spd: 250, hdg: 360, alt: 10000, vs: 1500 };
     this.lat = 'HDG'; this.vert = 'VS'; this.atMode = 'SPD';
     this.appArmed = false; this.gsArmed = false;
+    this.armedLnav = false; this.armedVnav = false;
     this.runway = null;        // { x, z, elev, heading } of the active threshold, for APP
     this.route = null;         // ActiveRoute from flightplan.js
     this.navState = null;
@@ -50,6 +51,7 @@ export class Autopilot {
   /** Called on every respawn: sensible MCP presets. */
   preset({ spd, hdg, alt, vs = 1500 }) {
     this.ap = false; this.at = false; this.appArmed = false; this.gsArmed = false;
+    this.armedLnav = false; this.armedVnav = false;
     this.lat = 'HDG'; this.vert = 'VS';
     Object.assign(this.sel, { spd, hdg: Math.round(hdg) || 360, alt, vs });
     this.emit();
@@ -76,9 +78,16 @@ export class Autopilot {
     if (this.ap) return this.disconnect('AUTOPILOT DISCONNECT');
     if (this.fm.onGround) return this.emit('A/P: önce kalkış yap', 'amber');
     this.ap = true; this.pitchI = 0;
-    this.lat = 'HDG';
-    const err = this.sel.alt - this.fm.pos.y * M2FT;
-    this.engageVertical(Math.abs(err) < 250 ? 'ALT' : 'VS');
+    this.lat = this.armedLnav && this.route?.legs?.length ? 'LNAV' : 'HDG';
+    if (this.armedVnav && this.route?.legs?.length) {
+      this.vert = 'VNAV';
+      this.flchVs = clamp(this.fm.vel.y * 60 * M2FT, 300, 6000);
+      this.vnavPhase = this.fm.pos.y * M2FT >= (this.route.route.crzFt - 200) ? 'CRZ' : 'CLB';
+    } else {
+      const err = this.sel.alt - this.fm.pos.y * M2FT;
+      this.engageVertical(Math.abs(err) < 250 ? 'ALT' : 'VS');
+    }
+    this.armedLnav = false; this.armedVnav = false;
     if (!this.at) this.toggleAT(true);
     this.emit('AUTOPILOT ENGAGED', 'green');
   }
@@ -108,6 +117,11 @@ export class Autopilot {
     if (name === 'AT') return this.toggleAT();
     if (name === 'LNAV' || name === 'VNAV') {
       if (!this.route || !this.route.legs.length) return this.emit('NO ROUTE', 'amber');
+      if (!this.ap && this.fm.onGround) {
+        if (name === 'LNAV') { this.armedLnav = !this.armedLnav; this.emit(this.armedLnav ? 'LNAV ARMED (kalkışta aktif)' : 'LNAV DISARMED'); }
+        else { this.armedVnav = !this.armedVnav; this.emit(this.armedVnav ? 'VNAV ARMED (kalkışta aktif)' : 'VNAV DISARMED'); }
+        return;
+      }
     }
     if (!this.ap) { this.toggleAP(); if (!this.ap) return; }
     if (name === 'HDG') { this.lat = 'HDG'; this.appArmed = false; this.gsArmed = false; }
@@ -119,6 +133,7 @@ export class Autopilot {
       if (this.vert === 'VNAV') this.engageVertical('ALT');
       else {
         this.vert = 'VNAV'; this.gsArmed = false;
+        this.flchVs = clamp(this.fm.vel.y * 60 * M2FT, 300, 6000);
         this.vnavPhase = this.fm.pos.y * M2FT >= (this.route.route.crzFt - 200) ? 'CRZ' : 'CLB';
         if (this.ap && !this.at) this.toggleAT(true);
         this.emit('VNAV ENGAGED', 'green');
@@ -184,7 +199,7 @@ export class Autopilot {
         const err = wrap180(this.runway.heading + corr - track);
         bankT = clamp(err * 1.4 - this.hdgRate * 2.2, -22, 22);
         if (agl < 60) bankT = clamp(bankT, -3, 3);
-      } else if (this.lat === 'LNAV' && this.navState && !this.navState.offRoute) {
+      } else if (this.lat === 'LNAV' && this.navState) {
         const err = wrap180(this.navState.desiredTrack - track);
         bankT = clamp(err * 1.4 - this.hdgRate * 2.2, -25, 25);
       } else {
@@ -308,10 +323,10 @@ export class Autopilot {
     const v = { VS: 'V/S', FLCH: 'LVL CHG', VNAV: `VNAV ${this.vnavPhase}`, 'ALT*': 'ALT ACQ', ALT: 'ALT HOLD', GS: 'G/S', FLARE: 'FLARE' };
     return {
       at: this.at ? (this.atMode === 'THR' ? 'THR' : this.atMode) : '',
-      lat: this.ap ? (this.lat === 'LOC' ? 'LOC' : this.lat === 'LNAV' && !this.navState?.offRoute ? 'LNAV' : 'HDG SEL') : '',
-      latArm: this.appArmed && this.lat !== 'LOC' ? 'LOC' : (this.ap && this.lat === 'LNAV' && this.navState?.offRoute ? 'LNAV' : ''),
+      lat: this.ap ? (this.lat === 'LOC' ? 'LOC' : this.lat === 'LNAV' ? 'LNAV' : 'HDG SEL') : '',
+      latArm: this.appArmed && this.lat !== 'LOC' ? 'LOC' : (!this.ap && this.armedLnav ? 'LNAV' : ''),
       vert: this.ap ? v[this.vert] : '',
-      vertArm: this.gsArmed ? 'G/S' : '',
+      vertArm: this.gsArmed ? 'G/S' : (!this.ap && this.armedVnav ? 'VNAV' : ''),
       ap: this.ap ? 'A/P' : '',
     };
   }

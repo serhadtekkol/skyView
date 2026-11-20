@@ -229,11 +229,12 @@ export class ActiveRoute {
 
     // check fly-by sequencing (only before the final FAF -> THR leg)
     if (this.legIndex < this.legs.length - 1) {
-      const a = this.points[this.legIndex], l = this.legs[this.legIndex], nl = this.legs[this.legIndex + 1];
+      const a = this.points[this.legIndex], b = this.points[this.legIndex + 1], l = this.legs[this.legIndex], nl = this.legs[this.legIndex + 1];
       const along = (pos.x - a.x) * l.ux + (pos.z - a.z) * l.uz;
       const remM = l.len - along;
+      const directM = Math.hypot(b.x - pos.x, b.z - pos.z);
       const leadM = Math.min(l.len * 0.45, turnAnticipationNm(gsKt, wrap180(nl.crs - l.crs)) * NM);
-      if (remM <= leadM) {
+      if ((along >= 0 && remM <= leadM) || directM <= Math.max(leadM, 600)) {
         this.legIndex++;
         sequenced = this.points[this.legIndex].id;
       }
@@ -247,8 +248,16 @@ export class ActiveRoute {
     let tailM = 0;
     for (let k = i + 1; k < this.legs.length; k++) tailM += this.legs[k].len;
 
-    const corr = clamp(-xtkM * 0.015, -30, 30);
-    const desiredTrack = (l.crs + corr + 360) % 360;
+    const directM = Math.hypot(b.x - pos.x, b.z - pos.z);
+    const brgToWpt = (Math.atan2(b.x - pos.x, -(b.z - pos.z)) / D2R + 360) % 360;
+    const offRoute = Math.abs(xtkM) > 5 * NM;
+    let desiredTrack;
+    if (offRoute || along < -500 || remM < 1000) {
+      desiredTrack = brgToWpt;
+    } else {
+      const corr = clamp(-xtkM * 0.02, -45, 45);
+      desiredTrack = (l.crs + corr + 360) % 360;
+    }
     const constraints = this.points.slice(i + 1).map(p => p.alt).filter(Boolean);
 
     return {
@@ -257,10 +266,10 @@ export class ActiveRoute {
       legCrs: l.crs,
       desiredTrack,
       xtkM,
-      distToWptM: remM,
-      distToDestM: remM + tailM,
+      distToWptM: offRoute || along < 0 ? directM : remM,
+      distToDestM: (offRoute || along < 0 ? directM : remM) + tailM,
       onFinal: i === this.legs.length - 1 || b.kind === 'thr',
-      offRoute: Math.abs(xtkM) > 5 * NM,
+      offRoute,
       sequenced,
       constraints,
     };

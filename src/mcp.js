@@ -44,7 +44,7 @@ export class MCP {
         <button data-b="VS">V/S</button></div>
       <div class="grp"><button data-b="FMS">FMS</button><button data-b="AP" class="ap">A/P</button><span class="hint">tekerle ayarla · Enter</span></div>`;
     document.body.appendChild(el);
-    ['pointerdown', 'dblclick'].forEach(ev => el.addEventListener(ev, e => e.stopPropagation()));
+    ['pointerdown', 'dblclick', 'keydown', 'keyup'].forEach(ev => el.addEventListener(ev, e => e.stopPropagation()));
     el.addEventListener('click', (e) => {
       const b = e.target.closest('button');
       if (!b) return;
@@ -112,7 +112,7 @@ export class MCP {
     const on = {
       AT: ap.at, AP: ap.ap,
       FLCH: ap.ap && ap.vert === 'FLCH', HDG: ap.ap && ap.lat === 'HDG',
-      LNAV: ap.ap && ap.lat === 'LNAV' && !ap.navState?.offRoute,
+      LNAV: ap.ap && ap.lat === 'LNAV',
       VNAV: ap.ap && ap.vert === 'VNAV',
       ALT: ap.ap && (ap.vert === 'ALT' || ap.vert === 'ALT*'), VS: ap.ap && ap.vert === 'VS',
       APP: ap.ap && (ap.lat === 'LOC' || ap.vert === 'GS' || ap.vert === 'FLARE'),
@@ -121,7 +121,7 @@ export class MCP {
     this.el.querySelectorAll('button').forEach(b => {
       const k = b.dataset.b;
       b.classList.toggle('on', !!on[k]);
-      b.classList.toggle('arm', (k === 'APP' && !on.APP && (ap.appArmed || ap.gsArmed)) || (k === 'LNAV' && ap.ap && ap.lat === 'LNAV' && !!ap.navState?.offRoute));
+      b.classList.toggle('arm', (k === 'APP' && !on.APP && (ap.appArmed || ap.gsArmed)) || (k === 'LNAV' && !on.LNAV && ap.armedLnav) || (k === 'VNAV' && !on.VNAV && ap.armedVnav));
       if (k === 'FMS') { b.disabled = !this.fmsEnabled; b.style.opacity = this.fmsEnabled ? '' : '0.45'; }
     });
   }

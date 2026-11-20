@@ -78,16 +78,25 @@ export class Menu {
     this.setAircraft(load('skyview.ac', 'b739'));
 
     // time of day + weather
-    const hr = this.el('hourSel'), wx = this.el('wxSel');
+    const hr = this.el('hourSel'), wx = this.el('wxSel'), wxPills = this.el('wxPills');
     wx.innerHTML = WEATHER_IDS.map(id => `<option value="${id}">${esc(WEATHER[id].label)}</option>`).join('');
+    const shortWx = { clear: 'Açık', scattered: 'Bulutlu', rain: 'Yağmur', storm: 'Fırtına', snow: 'Kar' };
+    if (wxPills) {
+      wxPills.innerHTML = WEATHER_IDS.map(id => `<button type="button" class="wx-pill" data-wx="${id}">${shortWx[id] || esc(WEATHER[id].label)}</button>`).join('');
+      wxPills.addEventListener('click', (e) => { const b = e.target.closest('[data-wx]'); if (b) this.setEnv(this.hour, b.dataset.wx); });
+    }
     const env = load('skyview.env', { hour: 14, weather: 'scattered' });
     this.setEnv(env.hour, env.weather);
     hr.addEventListener('input', () => this.setEnv(+hr.value, this.weather));
     wx.addEventListener('change', () => this.setEnv(this.hour, wx.value));
     [hr, wx].forEach(el => el.addEventListener('keydown', e => e.stopPropagation()));
+    const ctrlModal = this.el('ctrlModal');
+    this.el('btnCtrls')?.addEventListener('click', () => ctrlModal?.classList.add('open'));
+    this.el('btnCtrlClose')?.addEventListener('click', () => ctrlModal?.classList.remove('open'));
+    ctrlModal?.addEventListener('click', (e) => { if (e.target === ctrlModal) ctrlModal.classList.remove('open'); });
     tips(root, {
       '#hourSel': 'Gün saati|Yerel saat: güneşin yüksekliği ve yönü buna göre. Gece şehir, pist ve uçak ışıkları yanar. Uçuşta [6] / [Shift]+[6] ile ±1 saat.',
-      '#wxSel': 'Hava durumu|Bulutlar, yağış, rüzgâr, türbülans, sıcaklık ve pist yüzeyi (ıslak/karlı pistte fren daha zayıf). Uçuşta [7] ile değiştir.',
+      '#wxPills': 'Hava durumu|Bulutlar, yağış, rüzgâr, türbülans, sıcaklık ve pist yüzeyi (ıslak/karlı pistte fren daha zayıf). Uçuşta [7] ile değiştir.',
     });
 
     const last = load('skyview.last', { icao: 'LTFM', rw: 4, end: 'he' });
@@ -99,6 +108,7 @@ export class Menu {
     this.hour = Math.max(0, Math.min(23.99, hour)); this.weather = WEATHER[weather] ? weather : 'scattered';
     this.el('hourSel').value = this.hour; this.el('wxSel').value = this.weather;
     this.el('hourLbl').textContent = hourLabel(this.hour);
+    this.el('wxPills')?.querySelectorAll('[data-wx]').forEach(b => b.classList.toggle('on', b.dataset.wx === this.weather));
     save('skyview.env', { hour: this.hour, weather: this.weather });
   }
 
@@ -168,40 +178,73 @@ export class Menu {
 }
 
 export const MENU_HTML = `
-<div class="card wide">
-  <div class="head">
-    <div><h1>SkyView</h1><div class="sub">10 uçak tipi · gerçek dünya uydu arazisi · otopilot</div></div>
-    <button id="btnSynth" class="alt go small" disabled>Hayali dünya (çevrimdışı)</button>
-  </div>
-  <div class="grid">
-    <div id="map"></div>
-    <div class="side">
-      <div class="searchbox"><input id="search" placeholder="Havalimanı ara: LTFM, IST, Antalya, Heathrow…" autocomplete="off" /><ul id="results"></ul></div>
-      <div class="lbl">Saat ve hava</div>
-      <div class="envrow"><input type="range" id="hourSel" min="0" max="23.5" step="0.5"><span id="hourLbl"></span></div>
-      <select id="wxSel"></select>
-      <div class="lbl">Uçak</div>
-      <div><select id="acSel"></select><div id="acInfo" class="acinfo"></div></div>
-      <div class="acview"><canvas id="acView"></canvas><div id="acCap"></div><span class="achint">sürükle · tekerle yakınlaş</span></div>
-      <div id="apt"></div>
-      <div class="lbl">Pist ve yön</div>
-      <div id="runways"></div>
-      <div class="row">
-        <button id="btnTO" class="go" disabled>Pistten kalkış</button>
-        <button id="btnAPP" class="alt go" disabled>İniş yaklaşması</button>
+<div class="dispatch">
+  <div id="map"></div>
+  <div class="vignette"></div>
+  <div class="hud-ui">
+    <div class="panel topbar">
+      <div class="brand">
+        <div class="brand-mark">✈</div>
+        <div><h1>SkyView</h1><div class="sub">Flight Deck Dispatch</div></div>
       </div>
-      <div class="lbl">Serbest uçuş</div>
-      <div class="free"><span id="freeInfo">Haritada herhangi bir yere tıkla</span><button id="btnFree" class="alt go small" disabled>Buradan uç</button></div>
-      <details><summary>Kontroller</summary>
-        <table>
-          <tr><td>W/S · ↑/↓</td><td>Burun aşağı / yukarı</td></tr><tr><td>A/D · ←/→</td><td>Yatış</td></tr>
-          <tr><td>Q/E</td><td>Rudder / yer dümeni</td></tr><tr><td>R/F</td><td>Gaz</td></tr>
-          <tr><td>X/Z</td><td>Flap aç / topla</td></tr><tr><td>G</td><td>İniş takımı</td></tr>
-          <tr><td>Space</td><td>Fren · P park freni</td></tr><tr><td>L · T</td><td>Spoiler · ters itki</td></tr>
-          <tr><td>C · 1-5</td><td>Kamera</td></tr><tr><td>V</td><td>Mini harita</td></tr><tr><td>K · J · N</td><td>Piste dön · yaklaşma · harita</td></tr>
-        </table>
-      </details>
-      <div id="status">Yükleniyor…</div>
+      <div class="searchbox">
+        <input id="search" placeholder="Havalimanı ara: LTFM, IST, Sabiha, Antalya, Heathrow…" autocomplete="off" />
+        <ul id="results"></ul>
+      </div>
+      <div class="top-actions">
+        <div id="status">Yükleniyor…</div>
+        <button id="btnCtrls" type="button" class="alt go small">Kısayollar</button>
+        <button id="btnSynth" class="alt go small" disabled>Hayali Dünya (Çevrimdışı)</button>
+      </div>
+    </div>
+
+    <div class="docks">
+      <div class="panel dock">
+        <div class="sec-head"><span>Hangar · Uçak Seçimi</span><span>10 TİP</span></div>
+        <div class="acview"><canvas id="acView"></canvas><div id="acCap"></div><span class="achint">sürükle · zoom</span></div>
+        <select id="acSel"></select>
+        <div id="acInfo" class="acinfo"></div>
+        <div class="sec-head" style="margin-top:4px"><span>Atmosfer &amp; Saat</span></div>
+        <div class="envrow"><input type="range" id="hourSel" min="0" max="23.5" step="0.5"><span id="hourLbl"></span></div>
+        <div id="wxPills" class="wx-pills"></div>
+        <select id="wxSel" style="display:none"></select>
+      </div>
+
+      <div class="panel dock">
+        <div class="sec-head"><span>Kalkış Brifingi</span><span>REAL WORLD</span></div>
+        <div id="apt"></div>
+        <div class="lbl">Pist ve Kalkış Yönü</div>
+        <div id="runways"></div>
+        <div class="row" style="margin-top:4px">
+          <button id="btnTO" class="go" disabled>Pistten Kalkış</button>
+          <button id="btnAPP" class="alt go" disabled>9 km Yaklaşma</button>
+        </div>
+        <div class="lbl">Serbest Uçuş</div>
+        <div class="free">
+          <span id="freeInfo">Haritada bir noktaya tıkla</span>
+          <button id="btnFree" class="alt go small" disabled>Buradan Uç</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="ctrlModal" class="ctrl-modal">
+    <div class="panel ctrl-box">
+      <div class="sec-head"><span>Uçuş Kontrolleri &amp; Kısayollar</span><button id="btnCtrlClose" type="button" class="alt go small">Kapat</button></div>
+      <table>
+        <tr><td>W/S · ↑/↓</td><td>Burun aşağı / yukarı (S: çek)</td></tr>
+        <tr><td>A/D · ←/→</td><td>Yatış</td></tr>
+        <tr><td>Q/E</td><td>Rudder / yer dümeni</td></tr>
+        <tr><td>R/F · PgUp/Dn</td><td>Gaz</td></tr>
+        <tr><td>X / Z</td><td>Flap aç / topla</td></tr>
+        <tr><td>G · P</td><td>İniş takımı · park freni</td></tr>
+        <tr><td>Space · L · T</td><td>Fren · spoiler · ters itki</td></tr>
+        <tr><td>Tab / &#96; / F8</td><td>FMS / Uçuş Planı aç/kapa</td></tr>
+        <tr><td>I / Shift+I</td><td>Otopilot / otomatik gaz</td></tr>
+        <tr><td>M · , / .</td><td>Sessiz · ses kıs / aç</td></tr>
+        <tr><td>C · 1-5 · V</td><td>Kamera · mini harita</td></tr>
+        <tr><td>K · J · N</td><td>Piste dön · yaklaşma · harita</td></tr>
+      </table>
     </div>
   </div>
 </div>`;

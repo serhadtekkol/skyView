@@ -125,7 +125,7 @@ export class FMS {
         <button class="fms-btn exec" data-f="exec" style="margin-left:auto">EXEC</button>
       </div>`;
     document.body.appendChild(el);
-    ['pointerdown', 'wheel', 'dblclick'].forEach(ev => el.addEventListener(ev, e => e.stopPropagation()));
+    ['pointerdown', 'wheel', 'dblclick', 'keydown', 'keyup'].forEach(ev => el.addEventListener(ev, e => e.stopPropagation()));
     el.querySelector('.fms-close').onclick = () => this.setVisible(false);
     el.querySelectorAll('.fms-tabs button').forEach(b => b.onclick = () => { this.tab = b.dataset.t; this.render(); });
     el.querySelector('[data-f="clear"]').onclick = () => { this.draft = defaultPlan(this.world.site); this.markMod(); };
