@@ -206,7 +206,7 @@ export class World {
   /** Street-light glow shared by real terrain tiles and the synthetic town. */
   attachNightLights(env) {
     if (this.streetMat) return;
-    this.streetMat = makeGlowMat({ size: 1.4, minPx: 1.2, intensity: 0 });
+    this.streetMat = makeGlowMat({ size: 0.9, minPx: 0.9, intensity: 0 });
     this.glowMats.push(this.streetMat);
     if (this.terrain) this.terrain.lightMat = this.streetMat;
     if (this.townLights) { this.townLights.material = this.streetMat; this.scene.add(this.townLights); }
@@ -214,7 +214,7 @@ export class World {
 
   setNight(k) {
     this.terrain?.setNight(k);
-    if (this.streetMat) this.streetMat.uniforms.intensity.value = 3.2 * smoothstep(0.15, 0.8, k);
+    if (this.streetMat) this.streetMat.uniforms.intensity.value = 1.45 * smoothstep(0.15, 0.8, k);
     for (const { mat, max } of this.nightMats) mat.emissiveIntensity = max * k;
   }
 

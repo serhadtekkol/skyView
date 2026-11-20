@@ -264,12 +264,13 @@ export class RealTerrain {
       tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
       mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 1, metalness: 0, color: 0xf2f2f2 });
     }
-    // city glow: the Black Marble tile (or the part of it under this tile) as emissive map
-    if (night && mat !== this.fallbackMat) {
+    // subtle distant city glow (disabled around airports/runways so only runway lights stand out)
+    const tcx = (tile.minX + tile.maxX) * 0.5, tcz = (tile.minZ + tile.maxZ) * 0.5;
+    if (night && mat !== this.fallbackMat && !this.nearRunway(tcx, tcz, 2200)) {
       const n = 2 ** ns, ix = x - ((x >> ns) << ns), iy = y - ((y >> ns) << ns);
       const et = night.tex.clone();
       et.repeat.set(1 / n, 1 / n); et.offset.set(ix / n, 1 - (iy + 1) / n); et.needsUpdate = true;
-      mat.emissiveMap = et; mat.emissive.setRGB(1.0, 0.76, 0.46); mat.emissiveIntensity = this.nightK * 0.85;
+      mat.emissiveMap = et; mat.emissive.setRGB(0.95, 0.88, 0.78); mat.emissiveIntensity = this.nightK * 0.22;
       this.mats.add(mat);
     }
     if (mat !== this.fallbackMat) this.onMaterial?.(mat);
@@ -307,7 +308,14 @@ export class RealTerrain {
     return e.promise;
   }
 
-  /** Scatters glowing points proportional to the night-light radiance inside the tile. */
+  nearRunway(wx, wz, padM = 2200) {
+    for (const f of this.flat) {
+      if (Math.hypot(wx - f.cx, wz - f.cz) < f.halfLen + padM) return true;
+    }
+    return false;
+  }
+
+  /** Scatters subtle pinpoint street lights away from airports/runways. */
   streetLights(tile, night, ns, H, N) {
     const n = 2 ** ns, ix = tile.x - ((tile.x >> ns) << ns), iy = tile.y - ((tile.y >> ns) << ns);
     const px0 = ix * 256 / n, py0 = iy * 256 / n, span = 256 / n;           // sub-rect in Black Marble pixels
@@ -316,12 +324,12 @@ export class RealTerrain {
     let seed = (tile.x * 73856093) ^ (tile.y * 19349663) ^ (tile.z * 83492791);
     const rnd = () => { seed = (seed * 1664525 + 1013904223) | 0; return ((seed >>> 0) / 4294967296); };
     const pos = [], col = [];
-    for (let j = 0; j < S && pos.length < 6000; j++) for (let i = 0; i < S; i++) {
+    for (let j = 0; j < S && pos.length < 1800; j++) for (let i = 0; i < S; i++) {
       const bx = Math.min(255, Math.floor(px0 + (i + 0.5) / S * span)), by = Math.min(255, Math.floor(py0 + (j + 0.5) / S * span));
       const p = night.px, o = (by * 256 + bx) * 4;
-      const b = Math.max(0, (0.3 * p[o] + 0.55 * p[o + 1] + 0.15 * p[o + 2]) / 255 - 0.12) / 0.88;
-      if (b <= 0.02) continue;
-      let count = Math.pow(b, 1.6) * 1100 * cellKm2;
+      const b = Math.max(0, (0.3 * p[o] + 0.55 * p[o + 1] + 0.15 * p[o + 2]) / 255 - 0.18) / 0.82;
+      if (b <= 0.03) continue;
+      let count = Math.pow(b, 1.8) * 340 * cellKm2;
       count = Math.floor(count) + (rnd() < count % 1 ? 1 : 0);
       for (let k = 0; k < count; k++) {
         const fx = (i + rnd()) / S, fy = (j + rnd()) / S;
@@ -330,10 +338,10 @@ export class RealTerrain {
         const u = gx - x0, v = gy - y0;
         const h = (H[y0 * N + x0] * (1 - u) + H[y0 * N + x1] * u) * (1 - v) + (H[y1 * N + x0] * (1 - u) + H[y1 * N + x1] * u) * v;
         const wx = tile.minX + fx * (tile.maxX - tile.minX), wz = tile.minZ + fy * (tile.maxZ - tile.minZ);
-        if (h <= 0.5) continue;                                                  // no lights on water
+        if (h <= 0.5 || this.nearRunway(wx, wz, 2200)) continue;                 // no lights on water or around runways
         pos.push(wx, h + 4, wz);
         const w = rnd();
-        if (w < 0.62) col.push(1.0, 0.6, 0.22); else if (w < 0.92) col.push(1.0, 0.92, 0.78); else col.push(0.75, 0.85, 1.0);
+        if (w < 0.55) col.push(0.98, 0.90, 0.78); else if (w < 0.85) col.push(0.95, 0.96, 1.0); else col.push(0.80, 0.88, 1.0);
       }
     }
     if (!pos.length) return null;
@@ -345,11 +353,11 @@ export class RealTerrain {
     return pts;
   }
 
-  /** 0 (day) .. 1 (night): city glow on the imagery. */
+  /** 0 (day) .. 1 (night): subtle city glow on distant imagery. */
   setNight(k) {
     if (Math.abs(k - this.nightK) < 0.01) return;
     this.nightK = k;
-    for (const m of this.mats) m.emissiveIntensity = k * 0.85;
+    for (const m of this.mats) m.emissiveIntensity = k * 0.22;
   }
 
   request(tile, prio) {
