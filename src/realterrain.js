@@ -264,21 +264,23 @@ export class RealTerrain {
       tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
       mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 1, metalness: 0, color: 0xf2f2f2 });
     }
-    // subtle distant city glow (disabled around airports/runways so only runway lights stand out)
+    // faint urban glow only on far overview tiles (z < 12); close tiles use satellite-detected road & house lights
     const tcx = (tile.minX + tile.maxX) * 0.5, tcz = (tile.minZ + tile.maxZ) * 0.5;
-    if (night && mat !== this.fallbackMat && !this.nearRunway(tcx, tcz, 2200)) {
+    if (night && mat !== this.fallbackMat && z < 12 && !this.nearRunway(tcx, tcz, 2200)) {
       const n = 2 ** ns, ix = x - ((x >> ns) << ns), iy = y - ((y >> ns) << ns);
       const et = night.tex.clone();
       et.repeat.set(1 / n, 1 / n); et.offset.set(ix / n, 1 - (iy + 1) / n); et.needsUpdate = true;
-      mat.emissiveMap = et; mat.emissive.setRGB(0.95, 0.88, 0.78); mat.emissiveIntensity = this.nightK * 0.22;
+      mat.emissiveMap = et; mat.emissive.setRGB(0.95, 0.88, 0.78); mat.emissiveIntensity = this.nightK * 0.16;
       this.mats.add(mat);
     }
     if (mat !== this.fallbackMat) this.onMaterial?.(mat);
     const mesh = new THREE.Mesh(g, mat);
     mesh.receiveShadow = true; mesh.visible = false; mesh.matrixAutoUpdate = false;
-    // individual street lights where the night-lights data is bright (detailed tiles only)
-    if (night && this.lightMat && z >= 12 && z <= 15) {
-      const pts = this.streetLights(tile, night, ns, H, N);
+    // detect roads and buildings from the satellite imagery itself + Black Marble urban mask
+    if (night && tex?.image && this.lightMat && z >= 12 && z <= 15) {
+      let imgPx = null;
+      try { imgPx = pixelsOf(tex.image); } catch { /* tainted fallback */ }
+      const pts = this.streetLights(tile, night, ns, H, N, imgPx);
       if (pts) mesh.add(pts);
     }
     tile.mesh = mesh; tile.state = 'ready'; this.readyCount++;
@@ -315,33 +317,66 @@ export class RealTerrain {
     return false;
   }
 
-  /** Scatters subtle pinpoint street lights away from airports/runways. */
-  streetLights(tile, night, ns, H, N) {
+  /** Classifies a 256x256 satellite pixel: 0 = nature/water/empty, 1 = road, 2 = building/house. */
+  static classifyPixel(px, x, y) {
+    const lumAt = (ix, iy) => {
+      const o = (clamp(iy, 0, 255) * 256 + clamp(ix, 0, 255)) * 4;
+      return (0.299 * px[o] + 0.587 * px[o + 1] + 0.114 * px[o + 2]) / 255;
+    };
+    const o = (y * 256 + x) * 4;
+    const r = px[o] / 255, g = px[o + 1] / 255, b = px[o + 2] / 255;
+    const maxC = Math.max(r, g, b), minC = Math.min(r, g, b);
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    const sat = maxC > 0.01 ? (maxC - minC) / maxC : 0;
+    if (lum < 0.15) return 0;                                       // dark shadow / empty ground
+    if (g > r * 1.03 && g > b * 1.05 && g > 0.14) return 0;         // forest / vegetation / park
+    if (b > r * 1.12 && b > g * 1.04) return 0;                     // water
+    const edge = Math.abs(lumAt(x + 2, y) - lumAt(x - 2, y)) + Math.abs(lumAt(x, y + 2) - lumAt(x, y - 2));
+    if (sat < 0.16 && lum >= 0.18 && lum <= 0.56 && edge >= 0.05 && edge <= 0.30) return 1; // road / asphalt
+    if ((edge > 0.14 && lum >= 0.22 && lum <= 0.88) || (r > g * 1.08 && g > b * 1.04 && edge > 0.08)) return 2; // building / roof
+    return 0;
+  }
+
+  /** Places road lamps and house lights directly on roads & buildings detected in the satellite tile. */
+  streetLights(tile, night, ns, H, N, imgPx) {
     const n = 2 ** ns, ix = tile.x - ((tile.x >> ns) << ns), iy = tile.y - ((tile.y >> ns) << ns);
     const px0 = ix * 256 / n, py0 = iy * 256 / n, span = 256 / n;           // sub-rect in Black Marble pixels
-    const areaKm2 = ((tile.maxX - tile.minX) * (tile.maxZ - tile.minZ)) / 1e6;
-    const S = 20, cellKm2 = areaKm2 / (S * S);
+    const S = imgPx ? 44 : 20;
     let seed = (tile.x * 73856093) ^ (tile.y * 19349663) ^ (tile.z * 83492791);
     const rnd = () => { seed = (seed * 1664525 + 1013904223) | 0; return ((seed >>> 0) / 4294967296); };
     const pos = [], col = [];
-    for (let j = 0; j < S && pos.length < 1800; j++) for (let i = 0; i < S; i++) {
-      const bx = Math.min(255, Math.floor(px0 + (i + 0.5) / S * span)), by = Math.min(255, Math.floor(py0 + (j + 0.5) / S * span));
+    for (let j = 0; j < S && pos.length < 2400; j++) for (let i = 0; i < S; i++) {
+      const fx = (i + 0.5) / S, fy = (j + 0.5) / S;
+      const bx = Math.min(255, Math.floor(px0 + fx * span)), by = Math.min(255, Math.floor(py0 + fy * span));
       const p = night.px, o = (by * 256 + bx) * 4;
-      const b = Math.max(0, (0.3 * p[o] + 0.55 * p[o + 1] + 0.15 * p[o + 2]) / 255 - 0.18) / 0.82;
-      if (b <= 0.03) continue;
-      let count = Math.pow(b, 1.8) * 340 * cellKm2;
-      count = Math.floor(count) + (rnd() < count % 1 ? 1 : 0);
-      for (let k = 0; k < count; k++) {
-        const fx = (i + rnd()) / S, fy = (j + rnd()) / S;
-        // height from the tile grid (bilinear)
-        const gx = fx * (N - 1), gy = fy * (N - 1), x0 = Math.floor(gx), y0 = Math.floor(gy), x1 = Math.min(x0 + 1, N - 1), y1 = Math.min(y0 + 1, N - 1);
-        const u = gx - x0, v = gy - y0;
-        const h = (H[y0 * N + x0] * (1 - u) + H[y0 * N + x1] * u) * (1 - v) + (H[y1 * N + x0] * (1 - u) + H[y1 * N + x1] * u) * v;
-        const wx = tile.minX + fx * (tile.maxX - tile.minX), wz = tile.minZ + fy * (tile.maxZ - tile.minZ);
-        if (h <= 0.5 || this.nearRunway(wx, wz, 2200)) continue;                 // no lights on water or around runways
-        pos.push(wx, h + 4, wz);
-        const w = rnd();
-        if (w < 0.55) col.push(0.98, 0.90, 0.78); else if (w < 0.85) col.push(0.95, 0.96, 1.0); else col.push(0.80, 0.88, 1.0);
+      const urban = Math.max(0, (0.3 * p[o] + 0.55 * p[o + 1] + 0.15 * p[o + 2]) / 255 - 0.14) / 0.86;
+      if (urban <= 0.04) continue;
+
+      let kind = 0;
+      if (imgPx) {
+        kind = RealTerrain.classifyPixel(imgPx, Math.min(255, Math.floor(fx * 256)), Math.min(255, Math.floor(fy * 256)));
+        if (kind === 0) continue;
+        // density thinning modulated by urban brightness
+        if (rnd() > (kind === 1 ? 0.55 : 0.42) * Math.min(1, urban * 1.4)) continue;
+      } else {
+        if (rnd() > urban * 0.25) continue;
+        kind = 2;
+      }
+
+      const jx = clamp(fx + (rnd() - 0.5) * (0.4 / S), 0, 1), jy = clamp(fy + (rnd() - 0.5) * (0.4 / S), 0, 1);
+      const wx = tile.minX + jx * (tile.maxX - tile.minX), wz = tile.minZ + jy * (tile.maxZ - tile.minZ);
+      if (this.nearRunway(wx, wz, 2000)) continue;
+      const gx = jx * (N - 1), gy = jy * (N - 1), x0 = Math.floor(gx), y0 = Math.floor(gy), x1 = Math.min(x0 + 1, N - 1), y1 = Math.min(y0 + 1, N - 1);
+      const u = gx - x0, v = gy - y0;
+      const h = (H[y0 * N + x0] * (1 - u) + H[y0 * N + x1] * u) * (1 - v) + (H[y1 * N + x0] * (1 - u) + H[y1 * N + x1] * u) * v;
+      if (h <= 0.5) continue;
+      pos.push(wx, h + (kind === 1 ? 5 : 4), wz);
+      if (kind === 1) {
+        // road / highway lamps: crisp neutral-white & cool-white LEDs
+        if (rnd() < 0.6) col.push(0.94, 0.95, 1.0); else col.push(0.98, 0.90, 0.78);
+      } else {
+        // houses / buildings: soft warm window light
+        if (rnd() < 0.75) col.push(1.0, 0.89, 0.72); else col.push(0.92, 0.94, 0.98);
       }
     }
     if (!pos.length) return null;
@@ -353,11 +388,11 @@ export class RealTerrain {
     return pts;
   }
 
-  /** 0 (day) .. 1 (night): subtle city glow on distant imagery. */
+  /** 0 (day) .. 1 (night): subtle city glow on far overview imagery only. */
   setNight(k) {
     if (Math.abs(k - this.nightK) < 0.01) return;
     this.nightK = k;
-    for (const m of this.mats) m.emissiveIntensity = k * 0.22;
+    for (const m of this.mats) m.emissiveIntensity = k * 0.16;
   }
 
   request(tile, prio) {
