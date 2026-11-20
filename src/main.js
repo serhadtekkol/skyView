@@ -202,7 +202,16 @@ function toggleFms() {
   if (!fms) { hud.message('FMS: gerçek dünya modunda kullanılabilir', 'amber'); return; }
   fms.toggle();
 }
-input.on('Tab', () => toggleFms());
+window.addEventListener('keydown', (e) => {
+  if (!running || startEl.style.display !== 'none') return;
+  if (e.code === 'Tab' || e.code === 'Backquote' || e.code === 'F8') {
+    if (e.code === 'Tab' && e.target?.closest?.('#fms input, #fms select, #fms textarea')) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (document.activeElement?.closest?.('#mcp input')) document.activeElement.blur();
+    if (!e.repeat) toggleFms();
+  }
+}, true);
 input.on('KeyM', () => { sound.init(); hud.message(sound.toggleMute() ? 'SES KAPALI' : 'SES %' + Math.round(sound.getVolume('master') * 100)); });
 input.on('Comma', () => { sound.init(); const st = sound.adjustMaster(-0.1); hud.message(st.muted || st.master === 0 ? 'SES KAPALI' : 'SES %' + Math.round(st.master * 100)); });
 input.on('Period', () => { sound.init(); const st = sound.adjustMaster(0.1); hud.message('SES %' + Math.round(st.master * 100)); });

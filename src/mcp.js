@@ -80,7 +80,7 @@ export class MCP {
       '[data-b="HDG"]': 'HDG SEL · Yön seçimi|Uçak HDG alanındaki yöne döner (en fazla 25° yatış). APP/LNAV modunu iptal eder.',
       '[data-b="LNAV"]': 'LNAV · Yatay rota takibi|FMS uçuş planındaki ara noktaları ve varış yaklaşmasını otomatik takip eder.',
       '[data-b="VNAV"]': 'VNAV · Dikey profil|FMS planına göre CLB → CRZ → T/D alçalma → APP profilini ve hızını yönetir.',
-      '[data-b="FMS"]': fmsEnabled ? 'FMS · Uçuş Planı|Uçuş planı penceresini açar/kapatır. Kısayol: [Tab]' : 'FMS · Devre dışı|Uçuş planı yalnızca gerçek dünya modunda kullanılabilir.',
+      '[data-b="FMS"]': fmsEnabled ? 'FMS · Uçuş Planı|Uçuş planı penceresini açar/kapatır. Kısayol: [Tab], [`] veya [F8]' : 'FMS · Devre dışı|Uçuş planı yalnızca gerçek dünya modunda kullanılabilir.',
       '[data-b="APP"]': 'APP · ILS yaklaşma ve otomatik iniş|Seçili piste önce merkez hattını (LOC), sonra 3° süzülüş yolunu (G/S) yakalar. 50 ft’te flare, 30 ft’te gaz kesme, teker koyunca spoiler. Flap ve takımı sen aç.',
       '[data-b="ALT"]': 'ALT HLD · İrtifa tut|Şu anki irtifayı tutar. ALT alanına yeni değer yazarsan otopilot oraya kendisi tırmanır/iner.',
       '[data-b="VS"]': 'V/S · Dikey hız|V/S alanındaki dikey hızla (fpm) tırmanır veya alçalır; ALT değerine gelince irtifayı yakalar.',
