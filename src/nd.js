@@ -1,4 +1,5 @@
 import { MS2KT } from './physics.js';
+import { todDistanceNm, NM } from './flightplan.js';
 
 // Boeing-style Navigation Display (heading-up arc) with weather-radar returns.
 // Returns are sampled from the cloud field along a ±50° fan, cached and refreshed by a sweep.
@@ -96,6 +97,36 @@ export class NavDisplay {
       g.beginPath(); g.moveTo(CX, CY); g.lineTo(CX + Math.cos(sa) * R, CY + Math.sin(sa) * R); g.stroke();
     }
 
+    // ---- flight plan route (magenta) + T/D
+    if (ap?.route?.points?.length > 1) {
+      const pts = ap.route.points, activeIdx = ap.navState?.legIndex ?? 0;
+      g.strokeStyle = COL.magenta; g.lineWidth = 2;
+      g.beginPath();
+      pts.forEach((p, i) => {
+        const [sx, sy] = toScreen(p.x, p.z);
+        if (i === 0) g.moveTo(sx, sy); else g.lineTo(sx, sy);
+      });
+      g.stroke();
+      g.font = `10px ${FONT}`; g.textAlign = 'left';
+      pts.forEach((p, i) => {
+        if (i === 0 && p.kind === 'orig') return;
+        const [sx, sy] = toScreen(p.x, p.z);
+        const isNext = i === activeIdx + 1;
+        g.strokeStyle = isNext ? COL.white : COL.magenta; g.lineWidth = 1.5;
+        g.beginPath(); g.moveTo(sx, sy - 5); g.lineTo(sx + 4.5, sy + 3.5); g.lineTo(sx - 4.5, sy + 3.5); g.closePath(); g.stroke();
+        g.fillStyle = isNext ? COL.white : COL.magenta;
+        g.fillText(p.id, sx + 6, sy + 3);
+      });
+      const todM = (10 + todDistanceNm(ap.route.route.crzFt, ap.route.route.fafFt)) * NM;
+      const todPt = ap.route.pointAtDistFromDest(todM);
+      if (todPt) {
+        const [tx, ty] = toScreen(todPt.x, todPt.z);
+        g.strokeStyle = '#3cf07a'; g.lineWidth = 1.6;
+        g.beginPath(); g.arc(tx, ty, 5, 0, Math.PI * 2); g.stroke();
+        g.fillStyle = '#3cf07a'; g.fillText('T/D', tx + 7, ty + 3);
+      }
+    }
+
     // ---- runway + extended centreline
     if (ap?.runway) {
       const r = ap.runway, dx = Math.sin(r.heading * D2R), dz = -Math.cos(r.heading * D2R);
@@ -165,8 +196,21 @@ export class NavDisplay {
       g.restore();
     }
     g.textAlign = 'right';
-    g.fillStyle = COL.cyan; g.fillText(`WXR  ${this.tilt >= 0 ? '+' : ''}${this.tilt.toFixed(1)}°`, W - 10, 20);
-    g.fillStyle = COL.white; g.fillText(`${this.range} NM`, W - 10, 36);
+    if (ap?.navState?.activeWpt) {
+      const ns = ap.navState;
+      const dNm = ns.distToWptM / NM;
+      const gsK = Math.max(60, gs * MS2KT);
+      const min = Math.round((dNm / gsK) * 60);
+      g.fillStyle = COL.magenta;
+      g.fillText(`${ns.activeWpt.id}  ${dNm.toFixed(1)} NM`, W - 10, 20);
+      g.fillStyle = ns.offRoute ? '#ffb020' : COL.white;
+      g.fillText(ns.offRoute ? 'OFF ROUTE' : `ETA ${min}m · ${this.range} NM`, W - 10, 36);
+      g.fillStyle = COL.cyan; g.font = `10px ${FONT}`;
+      g.fillText(`WXR ${this.tilt >= 0 ? '+' : ''}${this.tilt.toFixed(1)}°`, W - 10, 50);
+    } else {
+      g.fillStyle = COL.cyan; g.fillText(`WXR  ${this.tilt >= 0 ? '+' : ''}${this.tilt.toFixed(1)}°`, W - 10, 20);
+      g.fillStyle = COL.white; g.fillText(`${this.range} NM`, W - 10, 36);
+    }
     g.fillStyle = COL.dim; g.font = `10px ${FONT}`;
     g.fillText(`${this.range / 2}`, CX + R / 2 * Math.cos(-38 * D2R) + 22, CY - R / 2 * Math.sin(52 * D2R) + 4);
     // legend

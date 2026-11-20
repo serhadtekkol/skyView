@@ -104,28 +104,13 @@ export class World {
     onStatus('Yükseklik verisi indiriliyor…');
     await this.terrain.preloadElevation(0, 0, 9000);
 
+    this.airportRunways = new Map();
     if (s.kind === 'airport') {
-      const a = s.airport;
-      a.rw.forEach((rw, i) => {
-        const le = this.frame.toLocal(rw.le.lat, rw.le.lon), he = this.frame.toLocal(rw.he.lat, rw.he.lon);
-        const dx = he.x - le.x, dz = he.z - le.z, len = Math.hypot(dx, dz);
-        const ux = dx / len, uz = dz / len;
-        const c = { x: (le.x + he.x) / 2, z: (le.z + he.z) / 2 };
-        const zone = this.terrain.addRunwayZone(c, ux, uz, len / 2, rw.wid / 2);
-        const active = i === s.rwIndex ? s.end : null;
-        const r = buildRunway({ len, wid: rw.wid, leId: rw.le.id, heId: rw.he.id }, active);
-        const heading = Math.atan2(ux, -uz);
-        r.group.rotation.set(Math.atan(zone.slope), -heading, 0, 'YXZ');
-        r.group.position.set(c.x, zone.e0, c.z);
-        this.addRunway(r);
-        if (i === s.rwIndex) {
-          const sgn = s.end === 'le' ? -1 : 1;
-          const hdgDeg = (heading * 180 / Math.PI + (s.end === 'le' ? 0 : 180) + 360) % 360;
-          const px = c.x + ux * sgn * len / 2, pz = c.z + uz * sgn * len / 2;
-          this.spawn = { x: px, z: pz, heading: hdgDeg, elev: zone.e0 + zone.slope * sgn * len / 2,
-            name: `${a.icao} · RWY ${s.end === 'le' ? rw.le.id : rw.he.id}` };
-        }
-      });
+      const list = await this.addAirport(s.airport, s.rwIndex, s.end);
+      const rw = s.airport.rw[s.rwIndex];
+      const endMeta = list[s.rwIndex][s.end === 'he' ? 'he' : 'le'];
+      this.spawn = { x: endMeta.x, z: endMeta.z, heading: endMeta.heading, elev: endMeta.elev,
+        name: `${s.airport.icao} · RWY ${s.end === 'le' ? rw.le.id : rw.he.id}` };
     } else {
       const ll = this.frame.toLatLon(0, 0);
       const h = Math.max(0, this.terrain.demAtLatLon(ll.lat, ll.lon) ?? 0);
@@ -134,6 +119,45 @@ export class World {
     onStatus('Uydu görüntüleri indiriliyor…');
     const p = new THREE.Vector3(this.spawn.x, this.spawn.elev + (s.kind === 'free' ? 1500 : 30), this.spawn.z);
     await this.terrain.preload(p, n => onStatus(`Uydu görüntüleri indiriliyor… ${n} karo`));
+  }
+
+  async ensureRouteCoverage(points) {
+    if (!this.terrain || !this.frame || !points?.length) return;
+    for (const pt of points) {
+      if (Number.isFinite(pt.lat) && Number.isFinite(pt.lon)) this.terrain.ensureCoverage(pt.lat, pt.lon, 80000);
+    }
+  }
+
+  async addAirport(airport, activeRwIndex = -1, activeEnd = null) {
+    if (!this.terrain || !this.frame || !airport) return null;
+    if (!this.airportRunways) this.airportRunways = new Map();
+    if (this.airportRunways.has(airport.icao)) return this.airportRunways.get(airport.icao);
+    this.terrain.ensureCoverage(airport.lat, airport.lon, 80000);
+    const c0 = this.frame.toLocal(airport.lat, airport.lon);
+    await this.terrain.preloadElevation(c0.x, c0.z, 9000);
+    const list = [];
+    airport.rw.forEach((rw, i) => {
+      const le = this.frame.toLocal(rw.le.lat, rw.le.lon), he = this.frame.toLocal(rw.he.lat, rw.he.lon);
+      const dx = he.x - le.x, dz = he.z - le.z, len = Math.hypot(dx, dz);
+      const ux = dx / len, uz = dz / len;
+      const c = { x: (le.x + he.x) / 2, z: (le.z + he.z) / 2 };
+      const zone = this.terrain.addRunwayZone(c, ux, uz, len / 2, rw.wid / 2);
+      const active = i === activeRwIndex ? activeEnd : null;
+      const r = buildRunway({ len, wid: rw.wid, leId: rw.le.id, heId: rw.he.id }, active);
+      const heading = Math.atan2(ux, -uz);
+      r.group.rotation.set(Math.atan(zone.slope), -heading, 0, 'YXZ');
+      r.group.position.set(c.x, zone.e0, c.z);
+      this.addRunway(r);
+      const hdgLe = (heading * 180 / Math.PI + 360) % 360;
+      const hdgHe = (hdgLe + 180) % 360;
+      list.push({
+        le: { id: rw.le.id, x: c.x - ux * len / 2, z: c.z - uz * len / 2, elev: zone.e0 - zone.slope * len / 2, heading: hdgLe },
+        he: { id: rw.he.id, x: c.x + ux * len / 2, z: c.z + uz * len / 2, elev: zone.e0 + zone.slope * len / 2, heading: hdgHe },
+      });
+    });
+    this.airportRunways.set(airport.icao, list);
+    if (activeRwIndex < 0) this.terrain.refreshArea(c0.x, c0.z, 7000);
+    return list;
   }
 
   addRunway(r) {

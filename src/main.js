@@ -7,6 +7,9 @@ import { Input, bindCommands } from './controls.js';
 import { CameraRig, CAMERA_MODES } from './camera.js';
 import { HUD } from './hud.js';
 import { Sound } from './audio.js';
+import { CabinAudio } from './cabin.js';
+import { VolumePanel } from './volume.js';
+import { FMS } from './fms.js';
 import { Menu, MENU_HTML } from './menu.js';
 import { MiniMap } from './minimap.js';
 import { Autopilot } from './autopilot.js';
@@ -41,15 +44,18 @@ const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerH
 const hud = new HUD(document.getElementById('hud'));
 hud.layout = layout;
 const sound = new Sound();
+const cabin = new CabinAudio(sound);
+const volPanel = new VolumePanel(sound);
+layout.dom('volume', volPanel.el, volPanel.el.querySelector('.vol-grip'));
 const rig = new CameraRig(camera, renderer.domElement);
 const input = new Input();
 
 // ---------------------------------------------------------------- menu
 const airports = await fetch('/assets/airports.json').then(r => r.json());
-let world = null, clouds = null, minimap = null, running = false, paused = false, startMode = 'to';
+let world = null, clouds = null, minimap = null, fms = null, running = false, paused = false, startMode = 'to';
 const menu = new Menu(startEl, airports, (site, mode) => startWorld(site, mode));
 let aircraft = null, fm = null, ap = null, mcp = null;
-window.sim = { rig, camera, renderer, scene, get world() { return world; }, get fm() { return fm; }, get ap() { return ap; }, get aircraft() { return aircraft; } };
+window.sim = { rig, camera, renderer, scene, get world() { return world; }, get fm() { return fm; }, get ap() { return ap; }, get aircraft() { return aircraft; }, get fms() { return fms; }, get sound() { return sound; } };
 menu.setReady(true);
 menu.setStatus('Hazır. Havalimanı ve pist seç, ya da haritaya tıklayıp serbest uç.');
 
@@ -88,7 +94,7 @@ async function startWorld(site, mode) {
     ap = new Autopilot(fm);
     hud.ap = ap;
     ap.onChange((text, color) => { if (text) hud.message(text, color || 'white', 3); });
-    bindCommands(input, fm, hud);
+    bindCommands(input, fm, hud, sound);
     world = new World(scene, renderer, site);
     env = new Environment(scene, renderer, world, { hour: menu.hour, weather: menu.weather });
     await world.init(t => menu.setStatus(t));
@@ -107,11 +113,16 @@ async function startWorld(site, mode) {
   if (!hud.nd) hud.nd = new NavDisplay();
   if (world.parkingSpots) addParkedTraffic();
   if (world.frame) { minimap = new MiniMap(world); layout.dom('minimap', minimap.box, minimap.box.querySelector('.mm-grip')); }
+  if (world.frame) {
+    fms = new FMS({ airports, world, fm, ap, minimap, hud, onToggle: v => mcp?.setFmsOpen(v) });
+    layout.dom('fms', fms.el, fms.el.querySelector('.fms-grip'));
+    minimap.onMapClick = (lat, lon) => { if (fms?.addPointFromMap(lat, lon)) hud.message('WPT EKLENDİ', 'cyan', 2); };
+  }
   if (world.frame) { firs = await firsP; if (firs) { minimap?.setFirs(firs); hud.attribution += ' · FIR: VATSpy (CC BY-SA 4.0)'; } }
   startMode = mode;
   spawn(mode);
   onResize();
-  if (!mcp) { mcp = new MCP(ap); layout.dom('mcp', mcp.el, mcp.el.querySelector('.mcp-grip')); }
+  if (!mcp) { mcp = new MCP(ap, { onFms: toggleFms, fmsEnabled: !!world.frame }); layout.dom('mcp', mcp.el, mcp.el.querySelector('.mcp-grip')); }
   menu.show(false);
   running = true;
 }
@@ -122,6 +133,7 @@ function spawn(mode) {
   const dx = Math.sin(sp.heading * D2R), dz = -Math.cos(sp.heading * D2R);
   rig.setMode(rig.mode);
   minimap?.reset();
+  cabin.reset();
   curFir = undefined; firTimer = 1e9; aheadTimer = 1e9;
   ap.runway = sp.free ? null : { x: sp.x, z: sp.z, elev: sp.elev, heading: sp.heading };
   const curFt = (h) => Math.round(h * 3.28084 / 100) * 100;
@@ -185,7 +197,15 @@ input.on('KeyU', (e) => {
   if (e && e.shiftKey) { layout.resetAll(); hud.message('PANEL YERLEŞİMİ SIFIRLANDI'); return; }
   hud.visible = !hud.visible;
 });
-input.on('KeyM', () => { hud.message(sound.toggleMute() ? 'SES KAPALI' : 'SES AÇIK'); });
+function toggleFms() {
+  if (!running) return;
+  if (!fms) { hud.message('FMS: gerçek dünya modunda kullanılabilir', 'amber'); return; }
+  fms.toggle();
+}
+input.on('Tab', () => toggleFms());
+input.on('KeyM', () => { sound.init(); hud.message(sound.toggleMute() ? 'SES KAPALI' : 'SES %' + Math.round(sound.getVolume('master') * 100)); });
+input.on('Comma', () => { sound.init(); const st = sound.adjustMaster(-0.1); hud.message(st.muted || st.master === 0 ? 'SES KAPALI' : 'SES %' + Math.round(st.master * 100)); });
+input.on('Period', () => { sound.init(); const st = sound.adjustMaster(0.1); hud.message('SES %' + Math.round(st.master * 100)); });
 input.on('Escape', () => { if (!running) return; paused = !paused; hud.message(paused ? 'DURAKLATILDI' : 'DEVAM', 'white', 1.5); });
 input.on('KeyK', () => { if (running) spawn(world.spawn.free ? 'free' : 'to'); });
 input.on('KeyJ', () => { if (running && !world.spawn.free) spawn('app'); });
@@ -250,6 +270,8 @@ function frame() {
     ap.update(dt, input.override || {});
     fm.inCloud = Math.max(clouds.densityAt(fm.pos), clouds.turbAt(fm.pos) * 0.9);   // storm cells are much rougher
     fm.step(dt);
+    const cab = cabin.update(dt, fm, ap);
+    if (cab.shaker) rig.shake = Math.max(rig.shake, 0.25);
     for (const e of fm.consumeEvents()) {
       if (e === 'touchdown') {
         const fpm = fm.lastTouchdownFpm;

@@ -76,14 +76,24 @@ export class Input {
   }
 }
 
-export function bindCommands(input, fm, ui) {
+export function bindCommands(input, fm, ui, sound = null) {
   const ctl = fm.ctl;
   input.on('KeyG', () => {
     if (fm.onGround && ctl.gearDown) { ui.message('Yerdeyken takım toplanamaz', 'amber'); return; }
-    ctl.gearDown = !ctl.gearDown; ui.message(ctl.gearDown ? 'GEAR DOWN' : 'GEAR UP');
+    ctl.gearDown = !ctl.gearDown;
+    sound?.gearSound(ctl.gearDown);
+    ui.message(ctl.gearDown ? 'GEAR DOWN' : 'GEAR UP');
   });
-  input.on(['KeyX', 'F7'], () => { ctl.flapIndex = Math.min(ctl.flapIndex + 1, FLAP_DETENTS.length - 1); ui.message(`FLAPS ${FLAP_DETENTS[ctl.flapIndex]}`); });
-  input.on(['KeyZ', 'F6'], () => { ctl.flapIndex = Math.max(ctl.flapIndex - 1, 0); ui.message(`FLAPS ${FLAP_DETENTS[ctl.flapIndex]}`); });
+  input.on(['KeyX', 'F7'], () => {
+    const next = Math.min(ctl.flapIndex + 1, FLAP_DETENTS.length - 1);
+    if (next !== ctl.flapIndex) { ctl.flapIndex = next; sound?.flapSound(); }
+    ui.message(`FLAPS ${FLAP_DETENTS[ctl.flapIndex]}`);
+  });
+  input.on(['KeyZ', 'F6'], () => {
+    const next = Math.max(ctl.flapIndex - 1, 0);
+    if (next !== ctl.flapIndex) { ctl.flapIndex = next; sound?.flapSound(); }
+    ui.message(`FLAPS ${FLAP_DETENTS[ctl.flapIndex]}`);
+  });
   input.on('KeyP', () => { ctl.parkingBrake = !ctl.parkingBrake; ui.message(ctl.parkingBrake ? 'PARKING BRAKE SET' : 'PARKING BRAKE RELEASED'); });
   input.on(['KeyL', 'Slash'], () => { ctl.spoilers = ctl.spoilers > 0 ? 0 : 1; ui.message(ctl.spoilers ? 'SPEEDBRAKE EXTENDED' : 'SPEEDBRAKE RETRACTED'); });
   input.on('KeyT', () => {

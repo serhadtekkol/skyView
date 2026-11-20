@@ -1,6 +1,7 @@
 import { MS2KT, M2FT, FLAP_DETENTS } from './physics.js';
 import { CAMERA_MODES } from './camera.js';
 import { groundHeight } from './world.js';
+import { computeWarnings } from './warnings.js';
 
 // Glass-cockpit style overlay drawn on a 2D canvas: PFD (attitude, speed/alt tapes, VSI, heading),
 // engine/systems panel, warnings and messages.
@@ -416,16 +417,7 @@ export class HUD {
 
   warnings(g, fm, dt) {
     const top = this.topInset() + 24;
-    const warn = [];
-    const ra = fm.agl * M2FT, vs = fm.vel.y * 60 * M2FT, ias = fm.ias * MS2KT;
-    if (fm.stall > 0.05 && !fm.onGround) warn.push(['STALL', C.red]);
-    const vfe = [340, 250, 250, 250, 210, 200, 190, 175, 162][fm.ctl.flapIndex];
-    if (ias > vfe + 4 || fm.mach > 0.82) warn.push(['OVERSPEED', C.red]);
-    if (!fm.onGround && ra < 2000 && vs < -2500 && ra / Math.max(1, -vs) < 0.33) warn.push(['PULL UP', C.red]);
-    if (!fm.onGround && ra < 800 && !fm.ctl.gearDown && fm.ctl.throttle < 0.3) warn.push(['TOO LOW — GEAR', C.red]);
-    if (Math.abs(fm.euler.z) > 40 * Math.PI / 180 && !fm.onGround) warn.push(['BANK ANGLE', C.amber]);
-    if (fm.tailStrike) warn.push(['TAIL STRIKE', C.amber]);
-    if (fm.onGround && fm.ctl.parkingBrake && fm.ctl.throttle > 0.3) warn.push(['CONFIG: PARKING BRAKE', C.amber]);
+    const warn = computeWarnings(fm).map(w => [w.text, w.level === 'red' ? C.red : C.amber]);
     g.textAlign = 'center'; g.font = `bold 22px ${FONT}`;
     const blink = (performance.now() % 700) < 450;
     warn.forEach(([t, col], i) => {
@@ -454,7 +446,7 @@ export class HUD {
       ['R/F  PgUp/PgDn', 'Gaz'], ['X / Z', 'Flap aç / topla (0-1-2-5-10-15-25-30-40)'], ['G', 'İniş takımı'],
       ['Space / B', 'Fren (basılı tut)'], ['P', 'Park freni'], ['L', 'Spoiler / hava freni'], ['T', 'Ters itki (yerde)'],
       ['[ / ]', 'Stab trim · Y: oto-trim'], ['C / 1-5', 'Kamera · fare sürükle: bakış · teker: zoom'],
-      ['K / J', 'Piste dön / iniş yaklaşmasına başla'], ['N', 'Haritayı aç (başka havalimanı / nokta)'], ['V', 'Mini harita aç / kapa (sağ üst)'], ['0 / 9', 'Radar (ND) aç/kapa · menzil 10-160 NM'], ['8', 'Bulunduğun FIR bilgi kartı'], ['6 / Shift+6', 'Saati ±1 saat değiştir'], ['7', 'Hava durumunu değiştir (açık → parçalı → yağmur → fırtına → kar)'], ['O', 'Canlı yansıma aç / kapa (performans)'], ['I / Shift+I', 'Otopilot / otomatik gaz (üstteki MCP paneli)'], ['Esc', 'Duraklat'], ['U', 'HUD gizle'], ['Shift+U', 'Panel yerleşimini sıfırla (paneller üst kenarından sürüklenir)'], ['M', 'Ses aç/kapa'],
+      ['K / J', 'Piste dön / iniş yaklaşmasına başla'], ['N', 'Haritayı aç (başka havalimanı / nokta)'], ['V', 'Mini harita aç / kapa (sağ üst)'], ['0 / 9', 'Radar (ND) aç/kapa · menzil 10-160 NM'], ['8', 'Bulunduğun FIR bilgi kartı'], ['6 / Shift+6', 'Saati ±1 saat değiştir'], ['7', 'Hava durumunu değiştir (açık → parçalı → yağmur → fırtına → kar)'], ['O', 'Canlı yansıma aç / kapa (performans)'], ['I / Shift+I', 'Otopilot / otomatik gaz (üstteki MCP paneli)'], ['Tab', 'FMS / Uçuş planı penceresini aç/kapa'], ['Esc', 'Duraklat'], ['U', 'HUD gizle'], ['Shift+U', 'Panel yerleşimini sıfırla (paneller üst kenarından sürüklenir)'], ['M · , / .', 'Ses aç/kapa · sesi %10 kıs / aç'],
       ['', ''], ['Kalkış', 'P (fren bırak) → R ile tam gaz → ~145 kt\'da S ile çek → G takım → Z flapları topla'],
       ['İniş', 'J ile başla: ~140 kt, PAPI 2 beyaz 2 kırmızı, 50 ft\'te gazı kes, yere değince T + Space'],
     ];

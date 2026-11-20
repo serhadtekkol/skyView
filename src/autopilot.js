@@ -1,12 +1,13 @@
 import { clamp } from './noise.js';
 import { MS2KT, M2FT } from './physics.js';
-import { groundHeight } from './world.js';
+import { vnavTarget, NM } from './flightplan.js';
 
 // Autopilot + autothrottle (Boeing-style MCP logic, simplified).
-// Lateral: HDG SEL | LOC.   Vertical: V/S | LVL CHG | ALT (ACQ/HOLD) | G/S | FLARE.
-// A/T: SPD (holds selected IAS) | THR (fixed climb thrust in LVL CHG) | RETARD (autoland).
+// Lateral: HDG SEL | LNAV | LOC.   Vertical: V/S | LVL CHG | VNAV | ALT (ACQ/HOLD) | G/S | FLARE.
+// A/T: SPD (holds selected IAS) | THR (fixed climb thrust in LVL CHG / VNAV CLB) | RETARD (autoland).
 
 const D2R = Math.PI / 180;
+const TAN3 = Math.tan(3 * D2R);
 const wrap180 = (d) => ((d % 360) + 540) % 360 - 180;
 
 export class Autopilot {
@@ -17,9 +18,30 @@ export class Autopilot {
     this.lat = 'HDG'; this.vert = 'VS'; this.atMode = 'SPD';
     this.appArmed = false; this.gsArmed = false;
     this.runway = null;        // { x, z, elev, heading } of the active threshold, for APP
+    this.route = null;         // ActiveRoute from flightplan.js
+    this.navState = null;
+    this.vnavPhase = 'CLB';
+    this.vnavTargetAlt = null;
     this.listeners = [];
     this.pitchI = 0; this.thrI = 0; this.flchVs = 0; this.lastHdg = null; this.hdgRate = 0;
     this.msg = null;
+  }
+
+  setRoute(activeRoute, destRunwayLocal = null) {
+    this.route = activeRoute;
+    if (destRunwayLocal) this.runway = destRunwayLocal;
+    if (activeRoute) {
+      activeRoute.start(this.fm.pos);
+      const altFt = this.fm.pos.y * M2FT;
+      this.vnavPhase = altFt >= (activeRoute.route.crzFt - 200) ? 'CRZ' : 'CLB';
+      this.navState = activeRoute.update(this.fm.pos, Math.hypot(this.fm.vel.x, this.fm.vel.z));
+    } else {
+      this.navState = null;
+      this.vnavTargetAlt = null;
+      if (this.lat === 'LNAV') this.lat = 'HDG';
+      if (this.vert === 'VNAV') this.vert = 'ALT';
+    }
+    this.emit();
   }
 
   onChange(fn) { this.listeners.push(fn); }
@@ -84,8 +106,24 @@ export class Autopilot {
   button(name) {
     if (name === 'AP') return this.toggleAP();
     if (name === 'AT') return this.toggleAT();
+    if (name === 'LNAV' || name === 'VNAV') {
+      if (!this.route || !this.route.legs.length) return this.emit('NO ROUTE', 'amber');
+    }
     if (!this.ap) { this.toggleAP(); if (!this.ap) return; }
     if (name === 'HDG') { this.lat = 'HDG'; this.appArmed = false; this.gsArmed = false; }
+    else if (name === 'LNAV') {
+      if (this.lat === 'LNAV') { this.lat = 'HDG'; this.emit('HDG SEL'); }
+      else { this.lat = 'LNAV'; this.appArmed = false; this.gsArmed = false; this.emit('LNAV ENGAGED', 'green'); }
+    }
+    else if (name === 'VNAV') {
+      if (this.vert === 'VNAV') this.engageVertical('ALT');
+      else {
+        this.vert = 'VNAV'; this.gsArmed = false;
+        this.vnavPhase = this.fm.pos.y * M2FT >= (this.route.route.crzFt - 200) ? 'CRZ' : 'CLB';
+        if (this.ap && !this.at) this.toggleAT(true);
+        this.emit('VNAV ENGAGED', 'green');
+      }
+    }
     else if (name === 'ALT') this.engageVertical('ALT');
     else if (name === 'VS') this.engageVertical('VS', true);
     else if (name === 'FLCH') this.engageVertical('FLCH');
@@ -120,6 +158,9 @@ export class Autopilot {
     const gsMS = Math.hypot(fm.vel.x, fm.vel.z);
     const track = gsMS > 5 ? (Math.atan2(fm.vel.x, -fm.vel.z) / D2R + 360) % 360 : hdg;
 
+    this.navState = this.route ? this.route.update(fm.pos, gsMS) : null;
+    if (this.navState?.sequenced) this.emit(`WPT SEQ: ${this.navState.sequenced}`, 'cyan');
+
     if (this.ap) {
       // ---------- lateral
       let bankT = 0;
@@ -130,6 +171,10 @@ export class Autopilot {
         rw = { along: -(rx * dx + rz * dz), cross: rx * -dz + rz * dx, dx, dz };   // along>0 before threshold; cross>0 right of centreline
         rw.vlat = fm.vel.x * -dz + fm.vel.z * dx;
       }
+      if (this.lat === 'LNAV' && this.navState?.onFinal && this.runway && !this.appArmed) {
+        this.appArmed = true; this.gsArmed = true;
+        this.emit('APP ARMED · LOC / G/S', 'white');
+      }
       if (this.appArmed && rw && this.lat !== 'LOC') {
         const intercept = Math.abs(wrap180(track - this.runway.heading)) < 60;
         if (intercept && rw.along > -500 && rw.along < 30000 && Math.abs(rw.cross) < 2500) { this.lat = 'LOC'; this.emit('LOC CAPTURED', 'green'); }
@@ -139,6 +184,9 @@ export class Autopilot {
         const err = wrap180(this.runway.heading + corr - track);
         bankT = clamp(err * 1.4 - this.hdgRate * 2.2, -22, 22);
         if (agl < 60) bankT = clamp(bankT, -3, 3);
+      } else if (this.lat === 'LNAV' && this.navState && !this.navState.offRoute) {
+        const err = wrap180(this.navState.desiredTrack - track);
+        bankT = clamp(err * 1.4 - this.hdgRate * 2.2, -25, 25);
       } else {
         const err = wrap180(this.sel.hdg - hdg);
         bankT = clamp(err * 1.25 - this.hdgRate * 2.0, -25, 25);
@@ -159,20 +207,61 @@ export class Autopilot {
       }
       if (this.vert === 'ALT*' && Math.abs(altErr) < 40) { this.vert = 'ALT'; this.emit(); }
 
-      if (this.vert === 'VS') vsT = this.sel.vs;
-      else if (this.vert === 'ALT' || this.vert === 'ALT*') vsT = clamp(altErr * 4.5, -2000, 2000);
-      else if (this.vert === 'FLCH') {
-        // pitch holds speed: too fast -> climb steeper / descend shallower
-        const se = clamp(ias - this.sel.spd, -15, 15);
-        this.flchVs += se * 14 * dt;
-        this.flchVs = altErr > 0 ? clamp(this.flchVs, 300, 6000) : clamp(this.flchVs, -6000, -300);
-        vsT = altErr > 0 ? clamp(this.flchVs + se * 35, 0, 6000) : clamp(this.flchVs + se * 35, -6000, 0);
-      } else if (this.vert === 'GS' && rw) {
-        const gpAlt = (this.runway.elev + Math.max(0, rw.along + 300) * Math.tan(3 * D2R)) * M2FT;
-        vsT = clamp(-gsMS * Math.tan(3 * D2R) * 60 * M2FT + (gpAlt - alt) * 3.5, -1800, 600);
-        if (agl < 50) { this.vert = 'FLARE'; this.emit('FLARE', 'green'); }
-      } else if (this.vert === 'FLARE') {
-        vsT = Math.max(-750, -(agl * 9 + 90));
+      if (this.vert === 'VNAV' && this.navState) {
+        const vn = vnavTarget({
+          ...this.route.route,
+          constraints: this.navState.constraints,
+          phase: this.vnavPhase,
+          altFt: alt,
+          distToDestNm: this.navState.distToDestM / NM,
+          onFinal: this.navState.onFinal,
+          speedScale: fm.speedScale || 1,
+        });
+        if (vn.phase !== this.vnavPhase) {
+          if (vn.phase === 'DES') this.emit('T/D · DESCENT STARTED', 'cyan');
+          else if (vn.phase === 'APP') this.emit('VNAV APP · SET FLAPS / GEAR', 'amber');
+          this.vnavPhase = vn.phase;
+        }
+        this.vnavTargetAlt = vn.altFt;
+        this.sel.spd = Math.round(vn.spdKt);
+        if (vn.phase === 'CLB') {
+          const vErr = vn.altFt - alt;
+          if (Math.abs(vErr) < 150) {
+            this.atMode = 'SPD';
+            vsT = clamp(vErr * 4.5, -1500, 1500);
+          } else {
+            this.atMode = 'THR';
+            const se = clamp(ias - this.sel.spd, -15, 15);
+            this.flchVs += se * 14 * dt;
+            this.flchVs = clamp(this.flchVs, 300, 6000);
+            vsT = clamp(this.flchVs + se * 35, 0, 6000);
+          }
+        } else if (vn.phase === 'CRZ') {
+          this.atMode = 'SPD';
+          vsT = clamp((vn.altFt - alt) * 4.5, -2000, 2000);
+        } else {
+          this.atMode = 'SPD';
+          const pathErr = vn.pathAltFt - alt;
+          if (alt <= vn.altFt + 80 && pathErr < 80) vsT = clamp((vn.altFt - alt) * 4.5, -1500, 1500);
+          else vsT = clamp(-gsMS * TAN3 * 60 * M2FT + pathErr * 3.0, -3500, 500);
+        }
+      } else {
+        this.vnavTargetAlt = null;
+        if (this.vert === 'VS') vsT = this.sel.vs;
+        else if (this.vert === 'ALT' || this.vert === 'ALT*') vsT = clamp(altErr * 4.5, -2000, 2000);
+        else if (this.vert === 'FLCH') {
+          // pitch holds speed: too fast -> climb steeper / descend shallower
+          const se = clamp(ias - this.sel.spd, -15, 15);
+          this.flchVs += se * 14 * dt;
+          this.flchVs = altErr > 0 ? clamp(this.flchVs, 300, 6000) : clamp(this.flchVs, -6000, -300);
+          vsT = altErr > 0 ? clamp(this.flchVs + se * 35, 0, 6000) : clamp(this.flchVs + se * 35, -6000, 0);
+        } else if (this.vert === 'GS' && rw) {
+          const gpAlt = (this.runway.elev + Math.max(0, rw.along + 300) * Math.tan(3 * D2R)) * M2FT;
+          vsT = clamp(-gsMS * Math.tan(3 * D2R) * 60 * M2FT + (gpAlt - alt) * 3.5, -1800, 600);
+          if (agl < 50) { this.vert = 'FLARE'; this.emit('FLARE', 'green'); }
+        } else if (this.vert === 'FLARE') {
+          vsT = Math.max(-750, -(agl * 9 + 90));
+        }
       }
       // envelope protection: never trade below a safe speed for climb
       const vMin = (fm.ctl.flapIndex === 0 ? 210 : 150 - 4 * fm.ctl.flapIndex) * (fm.speedScale || 1);
@@ -201,7 +290,8 @@ export class Autopilot {
         if (this.atMode !== 'RETARD') { this.atMode = 'RETARD'; this.emit('RETARD', 'green'); }
         thrT = 0;
       } else if (this.atMode === 'THR') {
-        thrT = this.sel.alt > alt ? 0.93 : 0;
+        const tgt = this.vert === 'VNAV' && this.vnavTargetAlt != null ? this.vnavTargetAlt : this.sel.alt;
+        thrT = tgt > alt ? 0.93 : 0;
       } else {
         const err = this.sel.spd - ias;
         this.thrI = clamp(this.thrI + err * 0.006 * dt, 0, 1);
@@ -215,11 +305,11 @@ export class Autopilot {
 
   /** Flight mode annunciations for the PFD. */
   get fma() {
-    const v = { VS: 'V/S', FLCH: 'LVL CHG', 'ALT*': 'ALT ACQ', ALT: 'ALT HOLD', GS: 'G/S', FLARE: 'FLARE' };
+    const v = { VS: 'V/S', FLCH: 'LVL CHG', VNAV: `VNAV ${this.vnavPhase}`, 'ALT*': 'ALT ACQ', ALT: 'ALT HOLD', GS: 'G/S', FLARE: 'FLARE' };
     return {
       at: this.at ? (this.atMode === 'THR' ? 'THR' : this.atMode) : '',
-      lat: this.ap ? (this.lat === 'LOC' ? 'LOC' : 'HDG SEL') : '',
-      latArm: this.appArmed && this.lat !== 'LOC' ? 'LOC' : '',
+      lat: this.ap ? (this.lat === 'LOC' ? 'LOC' : this.lat === 'LNAV' && !this.navState?.offRoute ? 'LNAV' : 'HDG SEL') : '',
+      latArm: this.appArmed && this.lat !== 'LOC' ? 'LOC' : (this.ap && this.lat === 'LNAV' && this.navState?.offRoute ? 'LNAV' : ''),
       vert: this.ap ? v[this.vert] : '',
       vertArm: this.gsArmed ? 'G/S' : '',
       ap: this.ap ? 'A/P' : '',

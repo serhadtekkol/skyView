@@ -61,7 +61,7 @@ export class Clouds {
       const R = 350 + rnd() * 900, H = 250 + rnd() * 650 * (R / 900);
       const cb = base + (rnd() - 0.5) * 120;
       // radar reflectivity grows with vertical development (light showers in tall cumulus)
-      this.clusters.push({ x: cx, z: cz, y0: cb, y1: cb + H, r: R, wx: Math.max(0, (H - 350) / 900) * 0.55, storm: false });
+      const start = puffs.length;
       const n = Math.round(14 + (R / 1250) * 40);
       for (let i = 0; i < n; i++) {
         const t = Math.pow(rnd(), 1.4);                // more puffs low (flat base, towering top)
@@ -74,14 +74,15 @@ export class Clouds {
           s: size, rot: rnd() * 6.283, shade: 0.25 + 0.75 * (y / H), a: 0.55 + rnd() * 0.35,
         });
       }
+      this.clusters.push({ x: cx, z: cz, y0: cb, y1: cb + H, r: R, wx: Math.max(0, (H - 350) / 900) * 0.55, storm: false, start, len: puffs.length - start });
     }
     // ---- storm cells (cumulonimbus): tall dark towers with an anvil, heavy rain and turbulence
     for (let k = 0; k < storms; k++) {
-      const ang = rnd() * Math.PI * 2, dist = (stormNear && k < 3 ? 6000 : 14000) + rnd() * (stormNear && k < 3 ? 6000 : 26000);
+      const ang = rnd() * Math.PI * 2, dist = (stormNear && k < 3 ? 6000 : 14000) + rnd() * (stormNear && k < 3 ? 6000 : 24000);
       const cx = Math.cos(ang) * dist, cz = Math.sin(ang) * dist;
       const R = 1300 + rnd() * 1000, H = 4200 + rnd() * 3200;
       const cb = base - 250 + rnd() * 150;
-      this.clusters.push({ x: cx, z: cz, y0: cb, y1: cb + H, r: R, wx: 1.6 + rnd() * 0.8, storm: true });
+      const start = puffs.length;
       const n = 120;
       for (let i = 0; i < n; i++) {
         const t = i < n * 0.78 ? Math.pow(rnd(), 0.9) * 0.82 : 0.82 + rnd() * 0.18;   // column, then anvil
@@ -95,6 +96,7 @@ export class Clouds {
           s: size, rot: rnd() * 6.283, shade: 0.05 + 0.8 * Math.pow(t, 1.5), a: 0.7 + rnd() * 0.25,
         });
       }
+      this.clusters.push({ x: cx, z: cz, y0: cb, y1: cb + H, r: R, wx: 1.6 + rnd() * 0.8, storm: true, start, len: puffs.length - start });
     }
     this.count = puffs.length;
     this.puffs = puffs;
@@ -297,12 +299,38 @@ export class Clouds {
     return best;
   }
 
+  wrapAround(pos) {
+    const WRAP = 80000, HALF = 40000;
+    const ox = this.drift.x * this.offsetT, oz = this.drift.z * this.offsetT;
+    let moved = false;
+    for (const c of this.clusters) {
+      let sx = 0, sz = 0;
+      const dx = c.x + ox - pos.x, dz = c.z + oz - pos.z;
+      if (dx < -HALF) sx = Math.ceil((-HALF - dx) / WRAP) * WRAP;
+      else if (dx > HALF) sx = -Math.ceil((dx - HALF) / WRAP) * WRAP;
+      if (dz < -HALF) sz = Math.ceil((-HALF - dz) / WRAP) * WRAP;
+      else if (dz > HALF) sz = -Math.ceil((dz - HALF) / WRAP) * WRAP;
+      if (sx || sz) {
+        c.x += sx; c.z += sz;
+        for (let i = c.start; i < c.start + c.len; i++) { this.puffs[i].x += sx; this.puffs[i].z += sz; }
+        moved = true;
+      }
+    }
+    return moved;
+  }
+
   update(dt, camera) {
     this.offsetT += dt;
     const fl = this.material.uniforms.flash.value; if (fl.w > 0) fl.w = Math.max(0, fl.w - dt * 9);
-    if (this.deck) { this.deck.tex.offset.x = this.offsetT * 0.00015; this.deck.tex.offset.y = this.offsetT * 0.00009; }
+    const cp = camera.position;
+    const wrapped = this.wrapAround(cp);
+    this.cirrus.position.x = cp.x; this.cirrus.position.z = cp.z;
+    this.cirrus.material.map.offset.set(cp.x * (6 / 160000) + this.offsetT * 0.0004, -cp.z * (6 / 160000));
+    if (this.deck) {
+      for (const m of [this.deck.under, this.deck.over, this.deck.base, this.deck.top]) { m.position.x = cp.x; m.position.z = cp.z; }
+      this.deck.tex.offset.set(cp.x * (14 / 200000) + this.offsetT * 0.00015, -cp.z * (14 / 200000) + this.offsetT * 0.00009);
+    }
     this.material.uniforms.fogDensity.value = this.scene.fog.density;
-    if ((this.frame++ % 6) === 0) this.writeBuffers(camera.position);
-    this.cirrus.material.map.offset.x = this.offsetT * 0.0004;
+    if (wrapped || (this.frame++ % 6) === 0) this.writeBuffers(cp);
   }
 }

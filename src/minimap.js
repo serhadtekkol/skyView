@@ -1,5 +1,6 @@
 import * as L from '/node_modules/leaflet/dist/leaflet-src.esm.js';
 import { tips } from './tooltip.js';
+import { todDistanceNm, NM } from './flightplan.js';
 
 // In-flight moving map (top-right): satellite + labels, aircraft symbol rotated to heading,
 // flown track, runways.  V toggles, buttons: follow / enlarge / zoom.
@@ -70,7 +71,11 @@ export class MiniMap {
 
     this.follow = true;
     this.lastPt = null; this.acc = 0;
+    this.onMapClick = null;
+    this.routeLayer = L.layerGroup().addTo(map);
+    this.draftLayer = L.layerGroup().addTo(map);
     map.on('dragstart', () => this.setFollow(false));
+    map.on('click', (e) => { this.onMapClick?.(e.latlng.lat, e.latlng.lng); });
     box.querySelector('.mm-bar').addEventListener('click', (e) => {
       const a = e.target.closest('button')?.dataset.a;
       if (a === 'follow') this.setFollow(!this.follow);
@@ -92,6 +97,33 @@ export class MiniMap {
   setVisible(v) { this.box.style.display = v ? '' : 'none'; if (v) this.map.invalidateSize(); }
 
   reset() { this.trail.setLatLngs([]); this.lastPt = null; }
+
+  setDraftRoute(points) {
+    this.draftLayer.clearLayers();
+    if (!points || points.length < 2) return;
+    L.polyline(points.map(p => [p.lat, p.lon]), { color: '#ffb020', weight: 2, opacity: 0.9, dashArray: '6 6', interactive: false }).addTo(this.draftLayer);
+    for (const p of points) {
+      if (p.kind === 'wpt') L.circleMarker([p.lat, p.lon], { radius: 4, color: '#ffb020', weight: 1.5, fillColor: '#0b1220', fillOpacity: 1, interactive: false }).addTo(this.draftLayer);
+    }
+  }
+
+  setActiveRoute(activeRoute) {
+    this.routeLayer.clearLayers();
+    if (!activeRoute || !activeRoute.points.length) return;
+    const pts = activeRoute.points;
+    L.polyline(pts.map(p => [p.lat, p.lon]), { color: '#ff4fd8', weight: 2.5, opacity: 0.95, interactive: false }).addTo(this.routeLayer);
+    for (const p of pts) {
+      L.circleMarker([p.lat, p.lon], { radius: p.kind === 'faf' ? 4.5 : 4, color: '#ff4fd8', weight: 1.5, fillColor: '#ff4fd8', fillOpacity: 0.9, interactive: false })
+        .bindTooltip(p.id, { permanent: p.kind !== 'orig', direction: 'top', className: 'mm-tick' }).addTo(this.routeLayer);
+    }
+    const todM = (10 + todDistanceNm(activeRoute.route.crzFt, activeRoute.route.fafFt)) * NM;
+    const todLocal = activeRoute.pointAtDistFromDest(todM);
+    if (todLocal) {
+      const ll = this.world.frame.toLatLon(todLocal.x, todLocal.z);
+      L.circleMarker([ll.lat, ll.lon], { radius: 5, color: '#3cf07a', weight: 2, fillColor: '#0b1220', fillOpacity: 1, interactive: false })
+        .bindTooltip('T/D', { permanent: true, direction: 'right', className: 'mm-tick' }).addTo(this.routeLayer);
+    }
+  }
 
   /** Draws FIR boundaries around the start point; the current one is highlighted. */
   setFirs(locator) {

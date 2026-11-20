@@ -24,8 +24,10 @@ const CSS = `
 `;
 
 export class MCP {
-  constructor(ap) {
+  constructor(ap, { onFms = null, fmsEnabled = true } = {}) {
     this.ap = ap;
+    this.onFms = onFms;
+    this.fmsEnabled = fmsEnabled;
     if (!document.getElementById('mcp-style')) { const s = document.createElement('style'); s.id = 'mcp-style'; s.textContent = CSS; document.head.appendChild(s); }
     const el = this.el = document.createElement('div');
     el.id = 'mcp';
@@ -33,17 +35,22 @@ export class MCP {
       <div class="grp mcp-grip" style="width:14px;padding-right:2px">⋮⋮</div>
       <div class="grp"><button data-b="AT">A/T</button>
         <div class="win"><label>IAS kt</label><input data-k="spd" inputmode="numeric"></div>
-        <button data-b="FLCH">LVL CHG</button></div>
+        <button data-b="FLCH">LVL CHG</button><button data-b="VNAV">VNAV</button></div>
       <div class="grp"><div class="win"><label>HDG</label><input data-k="hdg" inputmode="numeric"></div>
-        <button data-b="HDG">HDG SEL</button><button data-b="APP">APP</button></div>
+        <button data-b="HDG">HDG SEL</button><button data-b="LNAV">LNAV</button><button data-b="APP">APP</button></div>
       <div class="grp"><div class="win"><label>ALT ft</label><input data-k="alt" inputmode="numeric"></div>
         <button data-b="ALT">ALT HLD</button></div>
       <div class="grp"><div class="win"><label>V/S fpm</label><input data-k="vs" class="vs" inputmode="numeric"></div>
         <button data-b="VS">V/S</button></div>
-      <div class="grp"><button data-b="AP" class="ap">A/P</button><span class="hint">tekerle ayarla · Enter</span></div>`;
+      <div class="grp"><button data-b="FMS">FMS</button><button data-b="AP" class="ap">A/P</button><span class="hint">tekerle ayarla · Enter</span></div>`;
     document.body.appendChild(el);
     ['pointerdown', 'dblclick'].forEach(ev => el.addEventListener(ev, e => e.stopPropagation()));
-    el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { ap.button(b.dataset.b); b.blur(); this.render(); } });
+    el.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      if (b.dataset.b === 'FMS') { this.onFms?.(); b.blur(); return; }
+      ap.button(b.dataset.b); b.blur(); this.render();
+    });
 
     this.inputs = [...el.querySelectorAll('input')];
     const steps = { spd: [1, 10], hdg: [1, 10], alt: [100, 1000], vs: [100, 500] };
@@ -70,7 +77,10 @@ export class MCP {
     tips(el, {
       '[data-b="AT"]': 'A/T · Otomatik gaz|Gazı otomatik yöneterek IAS alanındaki hızı tutar. Gaz tuşlarına basınca devreden çıkar. Kısayol: [Shift]+[I]',
       '[data-b="FLCH"]': 'LVL CHG · Seviye değişimi|Gaz sabit (tırmanışta güç, alçalışta rölanti); hızı burunla tutarak ALT değerine çıkar ya da iner. Büyük irtifa değişiklikleri için.',
-      '[data-b="HDG"]': 'HDG SEL · Yön seçimi|Uçak HDG alanındaki yöne döner (en fazla 25° yatış). APP modunu iptal eder.',
+      '[data-b="HDG"]': 'HDG SEL · Yön seçimi|Uçak HDG alanındaki yöne döner (en fazla 25° yatış). APP/LNAV modunu iptal eder.',
+      '[data-b="LNAV"]': 'LNAV · Yatay rota takibi|FMS uçuş planındaki ara noktaları ve varış yaklaşmasını otomatik takip eder.',
+      '[data-b="VNAV"]': 'VNAV · Dikey profil|FMS planına göre CLB → CRZ → T/D alçalma → APP profilini ve hızını yönetir.',
+      '[data-b="FMS"]': fmsEnabled ? 'FMS · Uçuş Planı|Uçuş planı penceresini açar/kapatır. Kısayol: [Tab]' : 'FMS · Devre dışı|Uçuş planı yalnızca gerçek dünya modunda kullanılabilir.',
       '[data-b="APP"]': 'APP · ILS yaklaşma ve otomatik iniş|Seçili piste önce merkez hattını (LOC), sonra 3° süzülüş yolunu (G/S) yakalar. 50 ft’te flare, 30 ft’te gaz kesme, teker koyunca spoiler. Flap ve takımı sen aç.',
       '[data-b="ALT"]': 'ALT HLD · İrtifa tut|Şu anki irtifayı tutar. ALT alanına yeni değer yazarsan otopilot oraya kendisi tırmanır/iner.',
       '[data-b="VS"]': 'V/S · Dikey hız|V/S alanındaki dikey hızla (fpm) tırmanır veya alçalır; ALT değerine gelince irtifayı yakalar.',
@@ -90,19 +100,29 @@ export class MCP {
     return String(v);
   }
 
+  setFmsOpen(open) {
+    this.fmsOpen = !!open;
+    const b = this.el.querySelector('[data-b="FMS"]');
+    if (b) b.classList.toggle('on', this.fmsOpen);
+  }
+
   render(force = false) {
     const ap = this.ap;
     for (const inp of this.inputs) if (force || document.activeElement !== inp) inp.value = this.fmt(inp.dataset.k, ap.sel[inp.dataset.k]);
     const on = {
       AT: ap.at, AP: ap.ap,
       FLCH: ap.ap && ap.vert === 'FLCH', HDG: ap.ap && ap.lat === 'HDG',
+      LNAV: ap.ap && ap.lat === 'LNAV' && !ap.navState?.offRoute,
+      VNAV: ap.ap && ap.vert === 'VNAV',
       ALT: ap.ap && (ap.vert === 'ALT' || ap.vert === 'ALT*'), VS: ap.ap && ap.vert === 'VS',
       APP: ap.ap && (ap.lat === 'LOC' || ap.vert === 'GS' || ap.vert === 'FLARE'),
+      FMS: !!this.fmsOpen,
     };
     this.el.querySelectorAll('button').forEach(b => {
       const k = b.dataset.b;
       b.classList.toggle('on', !!on[k]);
-      b.classList.toggle('arm', k === 'APP' && !on.APP && (ap.appArmed || ap.gsArmed));
+      b.classList.toggle('arm', (k === 'APP' && !on.APP && (ap.appArmed || ap.gsArmed)) || (k === 'LNAV' && ap.ap && ap.lat === 'LNAV' && !!ap.navState?.offRoute));
+      if (k === 'FMS') { b.disabled = !this.fmsEnabled; b.style.opacity = this.fmsEnabled ? '' : '0.45'; }
     });
   }
 

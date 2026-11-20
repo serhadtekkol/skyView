@@ -73,7 +73,33 @@ export class RealTerrain {
     const x0 = Math.floor(lonToTX(ll0.lon, ROOT_Z)), x1 = Math.floor(lonToTX(ll1.lon, ROOT_Z));
     const y0 = Math.floor(latToTY(ll0.lat, ROOT_Z)), y1 = Math.floor(latToTY(ll1.lat, ROOT_Z));
     this.roots = [];
-    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) this.roots.push(new Tile(ROOT_Z, x, y, this));
+    this.rootKeys = new Set();
+    this.ensureCoverage(frame.lat0, frame.lon0, radius);
+  }
+
+  ensureCoverage(lat, lon, padM = 80000) {
+    const p = this.frame.toLocal(lat, lon);
+    const ll0 = this.frame.toLatLon(p.x - padM, p.z - padM), ll1 = this.frame.toLatLon(p.x + padM, p.z + padM);
+    const x0 = Math.floor(lonToTX(ll0.lon, ROOT_Z)), x1 = Math.floor(lonToTX(ll1.lon, ROOT_Z));
+    const y0 = Math.floor(latToTY(ll0.lat, ROOT_Z)), y1 = Math.floor(latToTY(ll1.lat, ROOT_Z));
+    const maxN = 2 ** ROOT_Z;
+    for (let y = Math.max(0, y0); y <= Math.min(maxN - 1, y1); y++) {
+      for (let x = Math.max(0, x0); x <= Math.min(maxN - 1, x1); x++) {
+        const key = `${x},${y}`;
+        if (this.rootKeys.has(key)) continue;
+        this.rootKeys.add(key);
+        this.roots.push(new Tile(ROOT_Z, x, y, this));
+      }
+    }
+  }
+
+  refreshArea(cx, cz, r = 7000) {
+    const visit = (t) => {
+      if (t.maxX < cx - r || t.minX > cx + r || t.maxZ < cz - r || t.minZ > cz + r) return;
+      if (t.state === 'ready' || t.state === 'loading') this.dispose(t);
+      t.children?.forEach(visit);
+    };
+    this.roots.forEach(visit);
   }
 
   // ------------------------------------------------------------------ elevation
