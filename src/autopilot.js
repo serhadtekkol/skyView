@@ -25,6 +25,7 @@ export class Autopilot {
     this.vnavTargetAlt = null;
     this.listeners = [];
     this.pitchI = 0; this.thrI = 0; this.flchVs = 0; this.lastHdg = null; this.hdgRate = 0;
+    this.apGrace = 0;
     this.msg = null;
   }
 
@@ -77,7 +78,7 @@ export class Autopilot {
   toggleAP() {
     if (this.ap) return this.disconnect('AUTOPILOT DISCONNECT');
     if (this.fm.onGround) return this.emit('A/P: önce kalkış yap', 'amber');
-    this.ap = true; this.pitchI = 0;
+    this.ap = true; this.pitchI = 0; this.apGrace = 0.5;
     this.lat = this.armedLnav && this.route?.legs?.length ? 'LNAV' : 'HDG';
     if (this.armedVnav && this.route?.legs?.length) {
       this.vert = 'VNAV';
@@ -150,6 +151,23 @@ export class Autopilot {
     this.emit();
   }
 
+  engageRoute() {
+    if (!this.route || !this.route.legs.length) return this.emit('Önce varış seçip EXEC yap', 'amber');
+    if (this.fm.onGround) {
+      this.armedLnav = true; this.armedVnav = true;
+      this.emit('LNAV + VNAV HAZIR · Kalkıştan sonra A/P (I) aç', 'cyan');
+      return;
+    }
+    this.ap = true; this.pitchI = 0; this.apGrace = 0.5;
+    this.lat = 'LNAV'; this.vert = 'VNAV';
+    this.appArmed = false; this.gsArmed = false;
+    this.armedLnav = false; this.armedVnav = false;
+    this.flchVs = clamp(this.fm.vel.y * 60 * M2FT, 300, 6000);
+    this.vnavPhase = this.fm.pos.y * M2FT >= (this.route.route.crzFt - 200) ? 'CRZ' : 'CLB';
+    if (!this.at) this.toggleAT(true);
+    this.emit('ROTA TAKİBİ AKTİF · LNAV + VNAV', 'green');
+  }
+
   disconnect(text = 'AUTOPILOT DISCONNECT') {
     if (!this.ap) return;
     this.ap = false; this.appArmed = false; this.gsArmed = false;
@@ -165,8 +183,9 @@ export class Autopilot {
     const hdg = fm.heading;
     if (this.lastHdg !== null) this.hdgRate += (wrap180(hdg - this.lastHdg) / dt - this.hdgRate) * Math.min(1, dt * 4);
     this.lastHdg = hdg;
-    if (this.ap && pilotOverride.pitchRoll) this.disconnect('AUTOPILOT DISCONNECT (pilot)');
-    if (this.at && pilotOverride.throttle) { this.at = false; this.emit('A/T DISCONNECT (pilot)', 'amber'); }
+    if (this.apGrace > 0) this.apGrace = Math.max(0, this.apGrace - dt);
+    if (this.ap && this.apGrace <= 0 && pilotOverride.pitchRoll) this.disconnect('OTOPİLOT KAPANDI (W/A/S/D manuel kumanda)');
+    if (this.at && this.apGrace <= 0 && pilotOverride.throttle) { this.at = false; this.emit('A/T KAPANDI (manuel gaz)', 'amber'); }
 
     const ias = fm.ias * MS2KT, alt = fm.pos.y * M2FT, vs = fm.vel.y * 60 * M2FT;
     const agl = fm.agl * M2FT;
@@ -200,6 +219,7 @@ export class Autopilot {
         bankT = clamp(err * 1.4 - this.hdgRate * 2.2, -22, 22);
         if (agl < 60) bankT = clamp(bankT, -3, 3);
       } else if (this.lat === 'LNAV' && this.navState) {
+        this.sel.hdg = Math.round(this.navState.desiredTrack) || 360;
         const err = wrap180(this.navState.desiredTrack - track);
         bankT = clamp(err * 1.4 - this.hdgRate * 2.2, -25, 25);
       } else {

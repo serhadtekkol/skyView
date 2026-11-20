@@ -286,6 +286,7 @@ export function vnavTarget({ crzFt, clbKt, desKt, crzMach, fafFt, constraints = 
 
   if (phase === 'CLB') {
     if (altFt >= crzFt - 200) phase = 'CRZ';
+    else if (altFt > fafFt + 600 && distToDestNm <= 10 + todDistanceNm(altFt, fafFt)) phase = 'DES';
   }
   if (phase === 'CRZ' && distToDestNm <= todDistFromDest) {
     phase = 'DES';

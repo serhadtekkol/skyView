@@ -49,8 +49,19 @@ const CSS = `
 #fms .fms-leg input.alt { padding: 4px 5px; font-size: 11px; text-align: center; }
 #fms .fms-leg input.alt.bad { border-color: #ff3b30; color: #ff8078; }
 #fms .fms-errs { font-size: 11px; color: #ff6b6b; padding: 0 10px 6px; }
-#fms .fms-foot { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid rgba(255,255,255,0.1); }
-#fms .fms-stat { font: 11px Consolas, monospace; color: #9fe6ff; padding: 6px 8px; border-radius: 6px; background: rgba(49,208,255,0.08); }
+#fms .fms-foot { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid rgba(255,255,255,0.1); flex-wrap: wrap; }
+#fms .fms-stat { font: 11px Consolas, monospace; color: #9fe6ff; padding: 6px 8px; border-radius: 6px; background: rgba(49,208,255,0.08); line-height: 1.45; }
+#fms .fms-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.08); background: rgba(0,0,0,0.22); }
+#fms .fms-step { font: 10px "Segoe UI", sans-serif; color: #8fa3bf; padding: 4px 5px; border-radius: 5px; border: 1px solid rgba(255,255,255,0.08); text-align: center; }
+#fms .fms-step.done { color: #3cf07a; border-color: rgba(60,240,122,0.4); background: rgba(60,240,122,0.08); }
+#fms .fms-step.next { color: #ffbe3b; border-color: rgba(255,190,59,0.55); background: rgba(255,190,59,0.1); font-weight: 700; }
+#fms .fms-tipbox { font-size: 11px; line-height: 1.45; color: #c7d6ea; padding: 7px 9px; border-radius: 6px; background: rgba(255,190,59,0.09); border: 1px solid rgba(255,190,59,0.28); }
+#fms .fms-tipbox b { color: #ffbe3b; }
+#fms .fms-btn.fly { background: linear-gradient(180deg, #38d6ff, #138dc7); color: #02121c; border-color: #38d6ff; }
+#fms .fms-guide h4 { margin: 6px 0 3px; font-size: 12px; color: #31d0ff; }
+#fms .fms-guide p, #fms .fms-guide li { margin: 2px 0; font-size: 11.5px; color: #c7d6ea; line-height: 1.45; }
+#fms .fms-guide ul { margin: 2px 0 6px; padding-left: 16px; }
+#fms .fms-guide code { background: rgba(255,255,255,0.1); padding: 1px 4px; border-radius: 3px; font-family: Consolas, monospace; color: #ffbe3b; }
 `;
 
 function defaultPlan(site) {
@@ -116,13 +127,16 @@ export class FMS {
         <button data-t="rte" class="on">RTE</button>
         <button data-t="legs">LEGS</button>
         <button data-t="perf">PERF</button>
+        <button data-t="guide">REHBER ?</button>
       </div>
+      <div class="fms-steps"></div>
       <div class="fms-body"></div>
       <div class="fms-errs"></div>
       <div class="fms-foot">
         <button class="fms-btn" data-f="clear">Temizle</button>
         <button class="fms-btn" data-f="revert">İptal MOD</button>
-        <button class="fms-btn exec" data-f="exec" style="margin-left:auto">EXEC</button>
+        <button class="fms-btn exec" data-f="exec">EXEC</button>
+        <button class="fms-btn fly" data-f="engage" style="margin-left:auto">Rotayı Takip Et</button>
       </div>`;
     document.body.appendChild(el);
     ['pointerdown', 'wheel', 'dblclick', 'keydown', 'keyup'].forEach(ev => el.addEventListener(ev, e => e.stopPropagation()));
@@ -131,6 +145,8 @@ export class FMS {
     el.querySelector('[data-f="clear"]').onclick = () => { this.draft = defaultPlan(this.world.site); this.markMod(); };
     el.querySelector('[data-f="revert"]').onclick = () => { this.draft = clone(this.active || defaultPlan(this.world.site)); this.mod = false; this.render(); this.syncPreview(); };
     el.querySelector('[data-f="exec"]').onclick = () => this.exec();
+    el.querySelector('[data-f="engage"]').onclick = () => { this.ap.engageRoute(); this.renderSteps(); };
+    this.ap.onChange(() => { if (this.visible) this.renderSteps(); });
 
     this.render();
     this.syncPreview();
@@ -189,7 +205,7 @@ export class FMS {
         for (let k = 1; k < segs; k++) covPts.push({ lat: a.lat + (b.lat - a.lat) * (k / segs), lon: a.lon + (b.lon - a.lon) * (k / segs) });
       }
       await this.world.ensureRouteCoverage(covPts);
-      const destList = await this.world.addAirport(route.destAirport);
+      const destList = await this.world.addAirport(route.destAirport).catch(() => null);
       const destLocal = destList?.[this.draft.dest.rwIndex]?.[this.draft.dest.end === 'he' ? 'he' : 'le'] || null;
 
       route.points = route.points.map(p => ({ ...p, ...this.world.frame.toLocal(p.lat, p.lon) }));
@@ -200,7 +216,7 @@ export class FMS {
       this.ap.setRoute(activeRoute, destLocal);
       this.minimap?.setActiveRoute(activeRoute);
       this.minimap?.setDraftRoute(null);
-      this.hud?.message(`FMS EXEC: ${route.destAirport.icao} · ${route.totalNm.toFixed(0)} NM`, 'green', 4);
+      this.hud?.message(`FMS EXEC: ${route.destAirport.icao} · ${route.totalNm.toFixed(0)} NM · Şimdi "Rotayı Takip Et"e bas`, 'green', 5);
     } finally {
       execBtn.textContent = 'EXEC';
       this.render();
@@ -225,11 +241,39 @@ export class FMS {
       ${apt ? `<select data-role="rw" data-kind="${label}">${rwOpts}</select>` : ''}`;
   }
 
+  renderSteps() {
+    const s1 = !!this.draft.dest;
+    const s2 = !!this.ap.route && !this.mod;
+    const s3 = !this.fm?.onGround;
+    const s4 = !!(this.ap.ap && this.ap.lat === 'LNAV') || !!(this.ap.armedLnav && this.ap.route);
+    const items = [
+      ['1. Varış Seç', s1],
+      ['2. EXEC', s2],
+      ['3. Havalan', s3],
+      ['4. Takip Et', s4],
+    ];
+    let nextMarked = false;
+    this.el.querySelector('.fms-steps').innerHTML = items.map(([lbl, done]) => {
+      const cls = done ? 'done' : (!nextMarked ? (nextMarked = true, 'next') : '');
+      return `<div class="fms-step ${cls}">${done ? '✓ ' : ''}${lbl}</div>`;
+    }).join('');
+    const engBtn = this.el.querySelector('[data-f="engage"]');
+    engBtn.disabled = !this.ap.route;
+    engBtn.textContent = (this.ap.ap && this.ap.lat === 'LNAV') ? '✓ Rota Takibinde' : (this.fm?.onGround ? 'Kalkışa Hazırla' : 'Rotayı Takip Et');
+  }
+
+  suggestCruise(route) {
+    if (!route) return;
+    const nm = route.totalNm;
+    this.draft.crzFt = nm < 50 ? 6000 : nm < 100 ? 12000 : nm < 200 ? 22000 : 32000;
+  }
+
   render() {
     const el = this.el;
     el.querySelectorAll('.fms-tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === this.tab));
     el.querySelector('.fms-mod').classList.toggle('on', this.mod);
     el.querySelector('[data-f="revert"]').disabled = !this.mod || !this.active;
+    this.renderSteps();
 
     const ppos = this.ppos();
     const errs = validate(this.draft, this.airports, ppos);
@@ -244,10 +288,15 @@ export class FMS {
       body.innerHTML = `
         <div data-box="orig">${this.renderAirportPicker('Kalkış (ORIG)', this.draft.origin, null, true)}</div>
         <div data-box="dest">${this.renderAirportPicker('Varış (DEST)', this.draft.dest, null, false)}</div>
-        ${route ? `<div class="fms-stat">Mesafe: <b>${route.totalNm.toFixed(1)} NM</b> (${Math.round(route.totalNm * 1.852)} km) · Tahmini ETE: <b>${Math.round(route.totalNm / (this.draft.crzMach * 460) * 60)} dk</b><br>FAF: ${route.fafFt} ft · T/D: varışa ${todDist.toFixed(0)} NM kala</div>` : '<div class="fms-stat">Varış havalimanı seçip pisti belirle.</div>'}
+        ${route ? `<div class="fms-stat">Mesafe: <b>${route.totalNm.toFixed(1)} NM</b> (${Math.round(route.totalNm * 1.852)} km) · Tahmini ETE: <b>${Math.round(route.totalNm / (this.draft.crzMach * 460) * 60)} dk</b><br>CRZ: ${this.draft.crzFt} ft · FAF: ${route.fafFt} ft · T/D: varışa ${todDist.toFixed(0)} NM kala</div>` : '<div class="fms-stat"><b>Adım 1:</b> Varış havalimanı seç (ör. LTFJ veya LTAC) ve alttan yeşil <b>EXEC</b> butonuna bas.</div>'}
       `;
       this.wirePicker(body.querySelector('[data-box="orig"]'), (val) => { this.draft.origin = val; this.markMod(); });
-      this.wirePicker(body.querySelector('[data-box="dest"]'), (val) => { this.draft.dest = val; this.markMod(); });
+      this.wirePicker(body.querySelector('[data-box="dest"]'), (val) => {
+        const changedApt = val?.icao !== this.draft.dest?.icao;
+        this.draft.dest = val;
+        if (changedApt && val) this.suggestCruise(buildRoute(this.draft, this.airports, ppos));
+        this.markMod();
+      });
     } else if (this.tab === 'legs') {
       const pts = route ? route.points : [
         ...(this.draft.origin ? [{ id: this.draft.origin.icao, kind: 'orig' }] : [{ id: 'PPOS', kind: 'ppos' }]),
@@ -264,7 +313,7 @@ export class FMS {
           return `
             <div class="fms-leg" data-wi="${wi}">
               <div><div class="fms-leg-id">${esc(p.id)}</div><div class="fms-leg-sub">${sub} · ${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}</div></div>
-              <input class="alt" data-alt="${wi}" placeholder="9000/A/B" value="${esc(fmtAlt(this.draft.wpts[wi].alt))}">
+              <input class="alt" data-alt="${wi}" placeholder="İrtifa (ops.)" title="Boş bırakılabilir. 9000 = tam 9000 ft, A9000 = en az 9000 ft, B12000 = en fazla 12000 ft" value="${esc(fmtAlt(this.draft.wpts[wi].alt))}">
               <div class="fms-row">
                 <button class="fms-btn" data-mv="-1" ${wi === 0 ? 'disabled' : ''}>↑</button>
                 <button class="fms-btn" data-mv="1" ${wi === this.draft.wpts.length - 1 ? 'disabled' : ''}>↓</button>
@@ -276,10 +325,14 @@ export class FMS {
       }).join('');
       body.innerHTML = `
         <div class="fms-row">
-          <input id="fmsWptIn" placeholder="ICAO (LTBA) veya enlem,boylam (40.8, 29.2)" style="flex:1">
+          <input id="fmsWptIn" placeholder="ICAO (LTBY) veya enlem,boylam (40.8, 29.2)" style="flex:1">
           <button class="fms-btn" id="fmsWptAdd">Ekle</button>
         </div>
-        <div class="fms-leg-sub">İpucu: Bu pencere açıkken Mini Harita üzerine tıklayınca waypoint eklenir.</div>
+        <div class="fms-tipbox">
+          <b>İrtifa kutusu (isteğe bağlı, boş bırakabilirsin):</b><br>
+          <code>9000</code> = tam 9000 ft · <code>A9000</code> = en az 9000 ft · <code>B12000</code> = en fazla 12000 ft<br>
+          Haritada (Mini Harita) tıklayarak da ara nokta ekleyebilirsin.
+        </div>
         ${rows}
       `;
       const addIn = body.querySelector('#fmsWptIn');
@@ -312,6 +365,32 @@ export class FMS {
           this.markMod();
         }));
       });
+    } else if (this.tab === 'guide') {
+      body.innerHTML = `
+        <div class="fms-guide">
+          <h4>1. Uçuş Planı Nasıl Hazırlanır?</h4>
+          <ul>
+            <li><b>RTE</b> sekmesinde varış havalimanı (ör. <code>LTFJ</code>, <code>LTAC</code>) ve pist seç.</li>
+            <li>İstersen <b>LEGS</b> sekmesinde Mini Harita'ya tıklayarak ara noktalar (waypoint) ekle.</li>
+            <li>Alttaki yeşil <b>EXEC</b> butonuna bas — rota haritada ve radarda (ND) mor çizgi olarak çıkar.</li>
+          </ul>
+          <h4>2. Rotayı Otopilotla Takip Etme</h4>
+          <ul>
+            <li>Önce pistten kalk (yerdeyken <b>Kalkışa Hazırla</b>'ya basabilirsin; havada <code>I</code> ile A/P açınca otomatik başlar).</li>
+            <li>Havadayken mavi <b>Rotayı Takip Et</b> butonuna tek tıkla — <code>A/P + LNAV + VNAV</code> birlikte açılır ve uçak noktaları sırayla döner.</li>
+            <li><b>Önemli:</b> Otopilot açıkken <code>W/A/S/D</code> veya yön tuşlarına basarsan otopilot manuel moda düşer. Kamerayı çevirmek için <b>fareyi sürükle</b>.</li>
+          </ul>
+          <h4>3. İrtifa Kısıtı (9000 / A / B) Nedir?</h4>
+          <ul>
+            <li><b>Boş bırakabilirsin:</b> Otopilot tırmanma ve alçalmayı kendi hesaplar.</li>
+            <li><code>9000</code> veya <code>AT 9000</code>: Noktadan <b>tam 9.000 ft</b>'te geç.</li>
+            <li><code>A9000</code> (Above): <b>En az 9.000 ft</b> (üstünde geç).</li>
+            <li><code>B12000</code> (Below): <b>En fazla 12.000 ft</b> (altında geç).</li>
+          </ul>
+          <h4>4. İniş (FAF ve Autoland)</h4>
+          <p>Son yaklaşma bacağına girilince <code>APP</code> otomatik kurulur. Ekranda <code>SET FLAPS / GEAR</code> çıkınca <code>X</code> ile flapları ve <code>G</code> ile takımı aç.</p>
+        </div>
+      `;
     } else {
       body.innerHTML = `
         <div class="fms-grid2">
