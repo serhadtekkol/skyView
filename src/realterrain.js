@@ -269,7 +269,7 @@ export class RealTerrain {
       const n = 2 ** ns, ix = x - ((x >> ns) << ns), iy = y - ((y >> ns) << ns);
       const et = night.tex.clone();
       et.repeat.set(1 / n, 1 / n); et.offset.set(ix / n, 1 - (iy + 1) / n); et.needsUpdate = true;
-      mat.emissiveMap = et; mat.emissive.setRGB(1.0, 0.78, 0.5); mat.emissiveIntensity = this.nightK * 2.4;
+      mat.emissiveMap = et; mat.emissive.setRGB(1.0, 0.76, 0.46); mat.emissiveIntensity = this.nightK * 0.85;
       this.mats.add(mat);
     }
     if (mat !== this.fallbackMat) this.onMaterial?.(mat);
@@ -349,7 +349,7 @@ export class RealTerrain {
   setNight(k) {
     if (Math.abs(k - this.nightK) < 0.01) return;
     this.nightK = k;
-    for (const m of this.mats) m.emissiveIntensity = k * 2.4;
+    for (const m of this.mats) m.emissiveIntensity = k * 0.85;
   }
 
   request(tile, prio) {
