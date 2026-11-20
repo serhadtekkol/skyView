@@ -23,6 +23,7 @@ export class Autopilot {
     this.navState = null;
     this.vnavPhase = 'CLB';
     this.vnavTargetAlt = null;
+    this.spdIntv = false;
     this.listeners = [];
     this.pitchI = 0; this.thrI = 0; this.flchVs = 0; this.lastHdg = null; this.hdgRate = 0;
     this.apGrace = 0;
@@ -53,6 +54,7 @@ export class Autopilot {
   preset({ spd, hdg, alt, vs = 1500 }) {
     this.ap = false; this.at = false; this.appArmed = false; this.gsArmed = false;
     this.armedLnav = false; this.armedVnav = false;
+    this.spdIntv = false;
     this.lat = 'HDG'; this.vert = 'VS';
     Object.assign(this.sel, { spd, hdg: Math.round(hdg) || 360, alt, vs });
     this.emit();
@@ -66,6 +68,7 @@ export class Autopilot {
     else if (key === 'vs') v = Math.round(v / 100) * 100;
     else v = Math.round(v);
     this.sel[key] = clamp(v, lim[0], lim[1]);
+    if (key === 'spd' && this.ap && this.vert === 'VNAV') this.spdIntv = true;
     // a new altitude while holding -> start climbing/descending toward it
     if (key === 'alt' && this.ap && (this.vert === 'ALT' || this.vert === 'ALT*')) {
       const err = this.sel.alt - this.fm.pos.y * M2FT;
@@ -133,7 +136,7 @@ export class Autopilot {
     else if (name === 'VNAV') {
       if (this.vert === 'VNAV') this.engageVertical('ALT');
       else {
-        this.vert = 'VNAV'; this.gsArmed = false;
+        this.vert = 'VNAV'; this.gsArmed = false; this.spdIntv = false;
         this.flchVs = clamp(this.fm.vel.y * 60 * M2FT, 300, 6000);
         this.vnavPhase = this.fm.pos.y * M2FT >= (this.route.route.crzFt - 200) ? 'CRZ' : 'CLB';
         if (this.ap && !this.at) this.toggleAT(true);
@@ -159,7 +162,7 @@ export class Autopilot {
       return;
     }
     this.ap = true; this.pitchI = 0; this.apGrace = 0.5;
-    this.lat = 'LNAV'; this.vert = 'VNAV';
+    this.lat = 'LNAV'; this.vert = 'VNAV'; this.spdIntv = false;
     this.appArmed = false; this.gsArmed = false;
     this.armedLnav = false; this.armedVnav = false;
     this.flchVs = clamp(this.fm.vel.y * 60 * M2FT, 300, 6000);
@@ -258,7 +261,7 @@ export class Autopilot {
           this.vnavPhase = vn.phase;
         }
         this.vnavTargetAlt = vn.altFt;
-        this.sel.spd = Math.round(vn.spdKt);
+        if (!this.spdIntv) this.sel.spd = Math.round(vn.spdKt);
         if (vn.phase === 'CLB') {
           const vErr = vn.altFt - alt;
           if (Math.abs(vErr) < 150) {
