@@ -1,0 +1,15 @@
+{
+  "name": "skyview",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "SkyView — browser flight simulator (Three.js): Boeing 737-900, real-world satellite terrain, autopilot",
+  "dependencies": {
+    "leaflet": "^1.9.4",
+    "three": "^0.170.0"
+  }
+}

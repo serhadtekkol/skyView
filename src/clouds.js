@@ -1,0 +1,203 @@
+import * as THREE from 'three';
+import { mulberry32, createNoise2D, fbm, smoothstep } from './noise.js';
+
+// Lit, sorted billboard-puff cumulus field + a high cirrus layer.
+
+function puffTexture() {
+  const S = 256;
+  const c = document.createElement('canvas'); c.width = c.height = S;
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(S, S);
+  const n = createNoise2D(31);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const u = x / S * 2 - 1, v = y / S * 2 - 1;
+    const r = Math.hypot(u, v);
+    const warp = fbm(n, u * 2.2 + 5, v * 2.2, 5) * 0.35;
+    let a = 1 - smoothstep(0.25, 1.0, r + warp);
+    a *= 0.75 + 0.25 * (fbm(n, u * 6, v * 6, 4) * 0.5 + 0.5);
+    // baked top lighting: brighter towards the top edge of the sprite (canvas y=0)
+    const light = Math.min(1, Math.max(0, 0.55 - v * 0.45 + fbm(n, u * 4 + 9, v * 4, 3) * 0.2));
+    const i = (y * S + x) * 4;
+    img.data[i] = light * 255; img.data[i + 1] = light * 255; img.data[i + 2] = light * 255;
+    img.data[i + 3] = Math.max(0, Math.min(1, a)) * 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.NoColorSpace;
+  return t;
+}
+
+function cirrusTexture() {
+  const S = 512;
+  const c = document.createElement('canvas'); c.width = c.height = S;
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(S, S);
+  const n = createNoise2D(8);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const a = x / S * Math.PI * 2, b = y / S * Math.PI * 2;
+    const X = Math.cos(a) * 1.0, Y = Math.sin(a) * 1.0, Z = Math.cos(b) * 4, W = Math.sin(b) * 4;
+    let v = fbm(n, X + Z * 0.8, Y + W * 0.8, 6) * 0.5 + 0.5;
+    v = smoothstep(0.5, 0.85, v);
+    const i = (y * S + x) * 4;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = 255; img.data[i + 3] = v * 200;
+  }
+  ctx.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
+export class Clouds {
+  constructor(scene, sunDir, fog, { count = 110, seed = 3, base = 1550 } = {}) {
+    this.scene = scene;
+    this.base = base;
+    const rnd = mulberry32(seed);
+    const puffs = [];
+    this.clusters = [];
+    for (let c = 0; c < count; c++) {
+      // denser coverage away from the airport so take-off view is open-ish
+      const ang = rnd() * Math.PI * 2, dist = 2500 + Math.pow(rnd(), 0.8) * 32000;
+      const cx = Math.cos(ang) * dist, cz = Math.sin(ang) * dist;
+      const R = 350 + rnd() * 900, H = 250 + rnd() * 650 * (R / 900);
+      const cb = base + (rnd() - 0.5) * 120;
+      this.clusters.push({ x: cx, z: cz, y0: cb, y1: cb + H, r: R });
+      const n = Math.round(14 + (R / 1250) * 40);
+      for (let i = 0; i < n; i++) {
+        const t = Math.pow(rnd(), 1.4);                // more puffs low (flat base, towering top)
+        const y = t * H;
+        const rr = R * (1 - 0.65 * t) * Math.sqrt(rnd());
+        const a = rnd() * Math.PI * 2;
+        const size = (0.32 + rnd() * 0.35) * R * (1 - 0.35 * t) + 80;
+        puffs.push({
+          x: cx + Math.cos(a) * rr, y: cb + y + size * 0.15, z: cz + Math.sin(a) * rr * 0.8,
+          s: size, rot: rnd() * 6.283, shade: 0.25 + 0.75 * (y / H), a: 0.55 + rnd() * 0.35,
+        });
+      }
+    }
+    // a few flat "base" puffs per cluster to darken & flatten undersides
+    this.count = puffs.length;
+    this.puffs = puffs;
+
+    const quad = new THREE.PlaneGeometry(1, 1);
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.index = quad.index;
+    geo.setAttribute('position', quad.attributes.position);
+    geo.setAttribute('uv', quad.attributes.uv);
+    this.aOffset = new THREE.InstancedBufferAttribute(new Float32Array(this.count * 3), 3);
+    this.aParams = new THREE.InstancedBufferAttribute(new Float32Array(this.count * 4), 4); // size, rot, shade, alpha
+    this.aOffset.setUsage(THREE.DynamicDrawUsage); this.aParams.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('offset', this.aOffset);
+    geo.setAttribute('params', this.aParams);
+    geo.instanceCount = this.count;
+
+    this.material = new THREE.ShaderMaterial({
+      uniforms: {
+        map: { value: puffTexture() },
+        sunDir: { value: sunDir.clone() },
+        litColor: { value: new THREE.Color(1.55, 1.5, 1.42) },
+        shadowColor: { value: new THREE.Color(0.52, 0.58, 0.68) },
+        fogColor: { value: fog.color },
+        fogDensity: { value: fog.density },
+      },
+      vertexShader: /* glsl */`
+        attribute vec3 offset; attribute vec4 params;
+        varying vec2 vUv; varying float vShade; varying float vAlpha; varying vec3 vWorld;
+        #include <common>
+        #include <logdepthbuf_pars_vertex>
+        void main(){
+          vec4 mv = viewMatrix * vec4(offset, 1.0);
+          float c = cos(params.y), s = sin(params.y);
+          vec2 p = vec2(c*position.x - s*position.y, s*position.x + c*position.y) * params.x;
+          // keep the baked "top light" pointing up-ish: only small rotations
+          p = mix(position.xy * params.x, p, 0.25);
+          mv.xy += p;
+          vWorld = offset;
+          float d = length(mv.xyz);
+          vAlpha = params.w * smoothstep(params.x * 0.25, params.x * 0.9, d);
+          vShade = params.z;
+          vUv = uv;
+          gl_Position = projectionMatrix * mv;
+          #include <logdepthbuf_vertex>
+        }`,
+      fragmentShader: /* glsl */`
+        uniform sampler2D map; uniform vec3 sunDir, litColor, shadowColor, fogColor; uniform float fogDensity;
+        varying vec2 vUv; varying float vShade; varying float vAlpha; varying vec3 vWorld;
+        #include <common>
+        #include <logdepthbuf_pars_fragment>
+        void main(){
+          #include <logdepthbuf_fragment>
+          vec4 t = texture2D(map, vUv);
+          float a = t.a * vAlpha;
+          if (a < 0.004) discard;
+          vec3 V = normalize(vWorld - cameraPosition);
+          float mu = dot(V, sunDir);
+          float silver = pow(max(mu, 0.0), 8.0) * (1.0 - t.a) * 1.6;      // bright edges when looking toward the sun
+          float lit = clamp(vShade * 0.65 + t.r * 0.55, 0.0, 1.0);
+          vec3 col = mix(shadowColor, litColor, lit) + litColor * silver;
+          col *= 0.92 + 0.12 * max(-mu, 0.0);                               // a little brighter down-sun
+          float d = length(vWorld - cameraPosition);
+          float f = 1.0 - exp(-fogDensity * fogDensity * d * d * 0.55);
+          col = mix(col, fogColor, f);
+          gl_FragColor = vec4(col, a * (1.0 - f * 0.5));
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }`,
+      transparent: true, depthWrite: false,
+    });
+    this.mesh = new THREE.Mesh(geo, this.material);
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = 5;
+    scene.add(this.mesh);
+
+    this.order = new Uint32Array(this.count).map((_, i) => i);
+    this.dist = new Float32Array(this.count);
+    this.drift = new THREE.Vector3(4, 0, 2.5);   // m/s wind drift
+    this.offsetT = 0;
+    this.frame = 0;
+    this.writeBuffers(new THREE.Vector3());
+
+    // high cirrus layer
+    const ct = cirrusTexture();
+    ct.repeat.set(6, 6);
+    const cm = new THREE.MeshBasicMaterial({ map: ct, transparent: true, opacity: 0.55, depthWrite: false, fog: false, color: 0xf4f7ff });
+    this.cirrus = new THREE.Mesh(new THREE.PlaneGeometry(160000, 160000).rotateX(Math.PI / 2), cm);
+    this.cirrus.position.y = 9500;
+    this.cirrus.renderOrder = 4;
+    scene.add(this.cirrus);
+  }
+
+  writeBuffers(cam) {
+    const n = this.count, P = this.puffs, D = this.dist, O = this.order;
+    const ox = this.drift.x * this.offsetT, oz = this.drift.z * this.offsetT;
+    for (let i = 0; i < n; i++) { const p = P[i]; const dx = p.x + ox - cam.x, dy = p.y - cam.y, dz = p.z + oz - cam.z; D[i] = dx * dx + dy * dy + dz * dz; }
+    O.sort((a, b) => D[b] - D[a]);   // far -> near
+    const off = this.aOffset.array, par = this.aParams.array;
+    for (let k = 0; k < n; k++) {
+      const p = P[O[k]];
+      off[k * 3] = p.x + ox; off[k * 3 + 1] = p.y; off[k * 3 + 2] = p.z + oz;
+      par[k * 4] = p.s; par[k * 4 + 1] = p.rot; par[k * 4 + 2] = p.shade; par[k * 4 + 3] = p.a;
+    }
+    this.aOffset.needsUpdate = true; this.aParams.needsUpdate = true;
+  }
+
+  /** Returns 0..1 "inside cloud" density at a position. */
+  densityAt(pos) {
+    const ox = this.drift.x * this.offsetT, oz = this.drift.z * this.offsetT;
+    let d = 0;
+    for (const c of this.clusters) {
+      if (pos.y < c.y0 - 30 || pos.y > c.y1 + 30) continue;
+      const t = (pos.y - c.y0) / (c.y1 - c.y0);
+      const r = c.r * (1 - 0.6 * Math.max(0, t)) * 0.85;
+      const h = Math.hypot(pos.x - c.x - ox, pos.z - c.z - oz);
+      if (h < r) d = Math.max(d, smoothstep(r, r * 0.55, h) * smoothstep(c.y0 - 30, c.y0 + 60, pos.y) * smoothstep(c.y1 + 30, c.y1 - 120, pos.y));
+    }
+    return d;
+  }
+
+  update(dt, camera) {
+    this.offsetT += dt;
+    this.material.uniforms.fogDensity.value = this.scene.fog.density;
+    if ((this.frame++ % 6) === 0) this.writeBuffers(camera.position);
+    this.cirrus.material.map.offset.x = this.offsetT * 0.0004;
+  }
+}
