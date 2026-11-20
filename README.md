@@ -2,6 +2,17 @@
 
 Tarayıcıda çalışan, **Three.js** tabanlı 3D ticari uçuş simülatörü. 10 farklı yolcu uçağı, gerçek dünya uydu arazisi, ileri seviye **FMS/MCDU uçuş planlama (LNAV/VNAV)**, gece/hava durumu motoru, hava radarı (ND), FIR takibi ve prosedürel kabin/kokpit ses sistemi içerir.
 
+## Ekran Görüntüleri
+
+### Flight Deck Dispatch (Ana Ekran)
+![Flight Deck Dispatch Ana Ekranı](docs/screenshots/dispatch.png)
+
+### Uçuş İçi FMS / MCDU, Otopilot (`LNAV` / `VNAV`) & Glass Cockpit HUD
+![FMS ve Kokpit HUD](docs/screenshots/cockpit-fms.png)
+
+### Gece Uçuşu, FIR Takibi & Hava Radarı
+![Gece Uçuşu](docs/screenshots/night-flight.png)
+
 ---
 
 ## Öne Çıkan Özellikler
