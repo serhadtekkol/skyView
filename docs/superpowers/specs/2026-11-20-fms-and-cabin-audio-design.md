@@ -142,7 +142,16 @@ Plan lat/lon olarak tutulur. Yerel x/z'ye dönüşüm `world.frame.toLocal` ile 
 - AudioContext henüz başlamadıysa ilk tıklamada başlar; `speechSynthesis` yoksa sesli bildirimler atlanır.
 - Bozuk `localStorage` → varsayılanlara dönülür.
 
-## 8. Test
+## 8. Dünya kapsamı (planlama sırasında bulunan kısıtlar)
+
+- **Arazi kapsamı:** `RealTerrain` yalnızca başlangıcın ±160 km çevresinde kök karo kuruyor. `EXEC` anında rota boyunca eksik zoom-8 kök karoları eklenir (`terrain.ensureCoverage(lat, lon)`). Rota uzunluğu en fazla **800 km** (validate hatası).
+- **Varış pisti:** Pist kurma döngüsü `world.addAirport(airport)` olarak ayrılır (async: önce DEM, sonra düzleştirme bölgesi ve pist mesh'i). Bölgede önceden kurulmuş karolar `terrain.refreshArea(x, z, r)` ile yeniden üretilir. Fonksiyon her pist ucu için yerel `{x, z, elev, heading}` döndürür; bu değerler APP için `ap.runway` olarak kullanılır.
+- **Bulutlar:** Kümeler uçağın etrafında 70 km periyotla toroidal sarılır. Küme ve puf'ları ±70 km kaydırılır. Cirrus ve deck katmanları kamerayı x/z'de takip eder, doku ofseti dünyaya sabit kalır.
+- **Hesaplama düzlemi:** Rota takibi (LNAV/VNAV) `world.frame.toLocal` ile yerel x/z düzleminde yapılır; fizik ve araziyle birebir tutarlıdır. Lat/lon büyük daire fonksiyonları yalnızca FMS gösterimi ve doğrulama için kullanılır.
+- **Yaklaşma hızı:** Son bacakta (FAF → pist) VNAV hızı `180 × speedScale` kt olur; G/S yakalanınca `145 × speedScale` kt (Vapp). Flap ve takım pilota bırakılır; HUD'da `FLAPS / GEAR` hatırlatması gösterilir.
+- **Plan geri yükleme:** `localStorage`'daki plan açılışta **MOD (taslak)** olarak yüklenir; `EXEC` gerekir, çünkü başlangıç yeri farklı olabilir.
+
+## 9. Test
 
 - **Birim (`node --test tests/`):**
   - `flightplan.js`: mesafe, yön, xtk, fly-by, TOD, kısıtlar, VNAV fazları, validate.
