@@ -20,7 +20,8 @@ export class Menu {
   constructor(root, airports, onStart) {
     this.root = root; this.airports = airports; this.onStart = onStart;
     this.sel = null; this.rwIndex = 0; this.end = 'le'; this.free = null; this.ready = false;
-    airports.forEach(a => { a._s = norm(`${a.icao} ${a.iata} ${a.name} ${a.city}`); });
+    const ccAlias = { UA: 'ukrayna ukraine kiev', TR: 'turkiye', FR: 'fransa', DE: 'almanya', GB: 'ingiltere', IT: 'italya', ES: 'ispanya', US: 'amerika', GR: 'yunanistan', RU: 'rusya', JP: 'japonya', AE: 'dubai', EG: 'misir' };
+    airports.forEach(a => { a._s = norm(`${a.icao} ${a.iata} ${a.name} ${a.city} ${a.cc} ${ccAlias[a.cc] || ''}`); });
     const landmarks = LANDMARKS.map(lm => ({ ...lm, _s: norm(`${lm.id} ${lm.name} ${lm.city} ${lm.cc}`) }));
     this.el = (id) => root.querySelector('#' + id);
 
@@ -274,6 +275,7 @@ export const MENU_HTML = `
         <tr><td>C · 1-5 · V</td><td>Kamera · mini harita</td></tr>
         <tr><td>6 · 7</td><td>Günün saati (+1/-1) · hava durumu</td></tr>
         <tr><td>F2 · F3 · F4</td><td>İstatistik · HDR + Bloom · Zaman hızı (1x–300x)</td></tr>
+        <tr><td>F5 · F6</td><td>ATC Kule paneli · Hava trafiği aç/kapa</td></tr>
         <tr><td>K · J · N</td><td>Piste dön · yaklaşma · harita</td></tr>
       </table>
     </div>

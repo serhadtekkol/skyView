@@ -155,6 +155,26 @@ export class Autopilot {
     this.emit();
   }
 
+  setHold(hold) {
+    this.hold = hold;
+    if (!hold || this.fm.onGround) return;
+    this.ap = true; this.pitchI = 0; this.apGrace = 0.5; this.bankCmd = -this.fm.euler.z / D2R;
+    this.lat = 'HOLD';
+    this.sel.alt = hold.altFt;
+    this.sel.spd = Math.round(210 * (this.fm.speedScale || 1));
+    this.engageVertical(Math.abs(hold.altFt - this.fm.pos.y * M2FT) < 250 ? 'ALT' : 'VS');
+    if (!this.at) this.toggleAT(true);
+    this.emit('HOLD ENGAGED', 'cyan');
+  }
+
+  clearHold() {
+    this.hold = null;
+    if (this.lat === 'HOLD') {
+      this.lat = this.route?.legs?.length ? 'LNAV' : 'HDG';
+      this.emit();
+    }
+  }
+
   engageRoute() {
     if (!this.route || !this.route.legs.length) return this.emit('Önce varış seçip EXEC yap', 'amber');
     if (this.fm.onGround) {
@@ -226,6 +246,12 @@ export class Autopilot {
         const err = wrap180(this.runway.heading + corr - track);
         bankT = clamp(err * 1.4 - this.hdgRate * 2.2, -22, 22);
         if (agl < 60) bankT = clamp(bankT, -3, 3);
+      } else if (this.lat === 'HOLD' && this.hold) {
+        const cur = this.hold.points[this.hold.wpIndex];
+        const desTrk = (Math.atan2(cur.x - fm.pos.x, -(cur.z - fm.pos.z)) / D2R + 360) % 360;
+        this.sel.hdg = Math.round(desTrk) || 360;
+        const err = wrap180(desTrk - track);
+        bankT = clamp(err * 0.95 - this.hdgRate * 2.2, -25, 25);
       } else if (this.lat === 'LNAV' && this.navState) {
         this.sel.hdg = Math.round(this.navState.desiredTrack) || 360;
         const err = wrap180(this.navState.desiredTrack - track);
@@ -355,7 +381,7 @@ export class Autopilot {
     const v = { VS: 'V/S', FLCH: 'LVL CHG', VNAV: `VNAV ${this.vnavPhase}`, 'ALT*': 'ALT ACQ', ALT: 'ALT HOLD', GS: 'G/S', FLARE: 'FLARE' };
     return {
       at: this.at ? (this.atMode === 'THR' ? 'THR' : this.atMode) : '',
-      lat: this.ap ? (this.lat === 'LOC' ? 'LOC' : this.lat === 'LNAV' ? 'LNAV' : 'HDG SEL') : '',
+      lat: this.ap ? (this.lat === 'LOC' ? 'LOC' : this.lat === 'HOLD' ? 'HOLD' : this.lat === 'LNAV' ? 'LNAV' : 'HDG SEL') : '',
       latArm: this.appArmed && this.lat !== 'LOC' ? 'LOC' : (!this.ap && this.armedLnav ? 'LNAV' : ''),
       vert: this.ap ? v[this.vert] : '',
       vertArm: this.gsArmed ? 'G/S' : (!this.ap && this.armedVnav ? 'VNAV' : ''),

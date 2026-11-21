@@ -127,6 +127,41 @@ export class NavDisplay {
       }
     }
 
+    // ---- holding pattern racetrack (ATC)
+    if (this.hold?.points?.length) {
+      g.strokeStyle = '#ffbe3b'; g.lineWidth = 2; g.setLineDash([5, 4]);
+      g.beginPath();
+      this.hold.points.forEach((p, i) => {
+        const [sx, sy] = toScreen(p.x, p.z);
+        if (i === 0) g.moveTo(sx, sy); else g.lineTo(sx, sy);
+      });
+      g.closePath(); g.stroke(); g.setLineDash([]);
+      const [fx, fy] = toScreen(this.hold.fixX, this.hold.fixZ);
+      g.fillStyle = '#ffbe3b'; g.font = `bold 10px ${FONT}`; g.textAlign = 'left';
+      g.fillText(`HOLD ${this.hold.lapsDone}/${this.hold.lapsRequired}`, fx + 6, fy + 3);
+    }
+
+    // ---- AI air traffic (TCAS diamonds with relative FL in hundreds of ft)
+    if (this.traffic?.length) {
+      const myFt = fm.pos.y * 3.28084;
+      g.font = `9px ${FONT}`; g.textAlign = 'left';
+      for (const t of this.traffic) {
+        const [tx, ty] = toScreen(t.x, t.z);
+        if (tx < 8 || tx > W - 8 || ty < 8 || ty > H - 8) continue;
+        const dH = Math.round((t.altFt - myFt) / 100);
+        const near = Math.hypot(t.x - fm.pos.x, t.z - fm.pos.z) < 6000 && Math.abs(dH) < 12;
+        g.strokeStyle = near ? '#ffbe3b' : '#31d0ff';
+        g.fillStyle = near ? '#ffbe3b' : '#31d0ff';
+        g.lineWidth = 1.4;
+        g.beginPath();
+        g.moveTo(tx, ty - 4.5); g.lineTo(tx + 4.5, ty); g.lineTo(tx, ty + 4.5); g.lineTo(tx - 4.5, ty);
+        g.closePath();
+        if (near) g.fill(); else g.stroke();
+        const tag = `${dH >= 0 ? '+' : ''}${String(dH).padStart(2, '0')}`;
+        g.fillText(tag, tx + 6, ty + 3);
+      }
+    }
+
     // ---- runway + extended centreline
     if (ap?.runway) {
       const r = ap.runway, dx = Math.sin(r.heading * D2R), dz = -Math.cos(r.heading * D2R);

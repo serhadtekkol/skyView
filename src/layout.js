@@ -215,7 +215,7 @@ export class Layout {
 
   resetAll() {
     this.pos = {}; save(this.pos);
-    document.querySelectorAll('#mcp, #minimap, #fms, #vol, #stats').forEach(p => {
+    document.querySelectorAll('#mcp, #minimap, #fms, #vol, #stats, #atc').forEach(p => {
       Object.assign(p.style, { left: '', top: '', right: '', bottom: '', width: '', height: '', maxHeight: '', transform: '', transformOrigin: '' });
     });
     for (const { opts } of this.domPanels.values()) opts.onResize?.();

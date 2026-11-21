@@ -78,6 +78,9 @@ export class MiniMap {
     this.onMapClick = null;
     this.routeLayer = L.layerGroup().addTo(map);
     this.draftLayer = L.layerGroup().addTo(map);
+    this.holdLayer = L.layerGroup().addTo(map);
+    this.trafficLayer = L.layerGroup().addTo(map);
+    this.trafficMarkers = new Map();
     this.poiLayer = L.layerGroup().addTo(map);
     this.showPoi = true;
     for (const lm of LANDMARKS) {
@@ -145,7 +148,40 @@ export class MiniMap {
   toggle() { this.box.style.display = this.box.style.display === 'none' ? '' : 'none'; if (this.box.style.display === '') this.map.invalidateSize(); return this.box.style.display !== 'none'; }
   setVisible(v) { this.box.style.display = v ? '' : 'none'; if (v) this.map.invalidateSize(); }
 
-  reset() { this.trail.setLatLngs([]); this.lastPt = null; }
+  reset() { this.trail.setLatLngs([]); this.lastPt = null; this.setHoldingPattern(null); }
+
+  setHoldingPattern(hold) {
+    this.holdLayer.clearLayers();
+    if (!hold || !this.world?.frame) return;
+    const f = this.world.frame;
+    const ll = hold.points.map(p => { const c = f.toLatLon(p.x, p.z); return [c.lat, c.lon]; });
+    ll.push(ll[0]);
+    L.polyline(ll, { color: '#ffbe3b', weight: 2.5, opacity: 0.95, dashArray: '6 5', interactive: false }).addTo(this.holdLayer);
+    const fix = f.toLatLon(hold.fixX, hold.fixZ);
+    L.circleMarker([fix.lat, fix.lon], { radius: 5, color: '#ffbe3b', weight: 2, fillColor: '#0b1220', fillOpacity: 1, interactive: false })
+      .bindTooltip(`HOLD · ${hold.altFt} ft (${hold.lapsRequired} tur)`, { permanent: true, direction: 'top', className: 'mm-tick' }).addTo(this.holdLayer);
+  }
+
+  updateTraffic(targets) {
+    const seen = new Set();
+    for (const t of targets || []) {
+      if (t.lat == null || t.lon == null) continue;
+      seen.add(t.callsign);
+      let mk = this.trafficMarkers.get(t.callsign);
+      const lbl = `${t.callsign} · FL${String(Math.round(t.altFt / 100)).padStart(3, '0')}`;
+      if (!mk) {
+        mk = L.circleMarker([t.lat, t.lon], { radius: 4, color: '#0b1220', weight: 1.5, fillColor: '#31d0ff', fillOpacity: 0.95, interactive: false })
+          .bindTooltip(lbl, { direction: 'right', className: 'mm-tick' }).addTo(this.trafficLayer);
+        this.trafficMarkers.set(t.callsign, mk);
+      } else {
+        mk.setLatLng([t.lat, t.lon]);
+        mk.setTooltipContent(lbl);
+      }
+    }
+    for (const [k, mk] of this.trafficMarkers) {
+      if (!seen.has(k)) { mk.remove(); this.trafficMarkers.delete(k); }
+    }
+  }
 
   setDraftRoute(points) {
     this.draftLayer.clearLayers();

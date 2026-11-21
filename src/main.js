@@ -12,6 +12,8 @@ import { VolumePanel } from './volume.js';
 import { StatsPanel } from './stats.js';
 import { netStats } from './netstats.js';
 import { FMS } from './fms.js';
+import { AirTraffic } from './traffic.js';
+import { ATCPanel } from './atc.js';
 import { Menu, MENU_HTML } from './menu.js';
 import { MiniMap } from './minimap.js';
 import { Autopilot } from './autopilot.js';
@@ -62,10 +64,10 @@ const airports = await fetch('/assets/airports.json').then(async r => {
   netStats.record('assets', txt.length);
   return JSON.parse(txt);
 });
-let world = null, clouds = null, minimap = null, fms = null, running = false, paused = false, startMode = 'to';
+let world = null, clouds = null, minimap = null, fms = null, traffic = null, atc = null, running = false, paused = false, startMode = 'to';
 const menu = new Menu(startEl, airports, (site, mode) => startWorld(site, mode));
 let aircraft = null, fm = null, ap = null, mcp = null;
-window.sim = { rig, camera, renderer, scene, postfx, get world() { return world; }, get env() { return env; }, get fm() { return fm; }, get ap() { return ap; }, get aircraft() { return aircraft; }, get fms() { return fms; }, get sound() { return sound; }, stats: statsPanel, netStats };
+window.sim = { rig, camera, renderer, scene, postfx, get world() { return world; }, get env() { return env; }, get fm() { return fm; }, get ap() { return ap; }, get aircraft() { return aircraft; }, get fms() { return fms; }, get traffic() { return traffic; }, get atc() { return atc; }, get sound() { return sound; }, stats: statsPanel, netStats };
 menu.setReady(true);
 menu.setStatus('Hazır. Havalimanı ve pist seç, ya da haritaya tıklayıp serbest uç.');
 
@@ -131,6 +133,9 @@ async function startWorld(site, mode) {
   }
   if (world.frame) { firs = await firsP; if (firs) { minimap?.setFirs(firs); hud.attribution += ' · FIR: VATSpy (CC BY-SA 4.0)'; } }
   startMode = mode;
+  traffic = new AirTraffic(scene, world);
+  atc = new ATCPanel({ world, fm, ap, sound, hud, minimap, traffic });
+  layout.dom('atc', atc.el, atc.el.querySelector('.atc-grip'));
   spawn(mode);
   onResize();
   if (!mcp) { mcp = new MCP(ap, { onFms: toggleFms, fmsEnabled: !!world.frame }); layout.dom('mcp', mcp.el, mcp.el.querySelector('.mcp-grip')); }
@@ -146,6 +151,7 @@ function spawn(mode) {
   minimap?.reset();
   cabin.reset();
   statsPanel.resetFlight();
+  atc?.reset();
   curFir = undefined; firTimer = 1e9; aheadTimer = 1e9;
   ap.runway = sp.free ? null : { x: sp.x, z: sp.z, elev: sp.elev, heading: sp.heading };
   const curFt = (h) => Math.round(h * 3.28084 / 100) * 100;
@@ -236,6 +242,16 @@ window.addEventListener('keydown', (e) => {
       hud.envLabel = env.label;
       hud.message(s === 0 ? 'ZAMAN AKIŞI: SABİT' : s === 1 ? 'ZAMAN AKIŞI: 1x (Gerçek Zaman)' : `ZAMAN AKIŞI: ${s}x`, 'cyan', 2.5);
     }
+    return;
+  }
+  if (e.code === 'F5' && atc) {
+    e.preventDefault();
+    if (!e.repeat) atc.toggleCollapse();
+    return;
+  }
+  if (e.code === 'F6' && atc) {
+    e.preventDefault();
+    if (!e.repeat) atc.toggleTraffic();
     return;
   }
   if (e.code === 'Tab' || e.code === 'Backquote' || e.code === 'F8') {
@@ -342,7 +358,12 @@ function frame() {
   hud.cloudDensity = camCloud;
   aircraft.nightK = env ? env.night : 0;
   clouds.update(dt, camera);
+  if (traffic && !paused && !menuOpen) traffic.update(dt, fm.pos);
+  if (atc && !paused && !menuOpen) atc.update(dt);
+  const trTargets = traffic ? traffic.getTargets(world.frame) : [];
   minimap?.update(dt, fm);
+  minimap?.updateTraffic?.(trTargets);
+  if (hud.nd) { hud.nd.hold = atc?.hold || null; hud.nd.traffic = trTargets; }
   updateFir(dt);
   sound.update(fm, rig.mode, camera.position.distanceTo(fm.pos));
   aircraft.updateReflections(dt, renderer, scene);
