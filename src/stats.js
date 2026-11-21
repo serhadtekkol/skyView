@@ -54,6 +54,7 @@ export class StatsPanel {
         <div class="st-row"><span>Uçuş Süresi (Havada)</span><span class="st-val green" data-s="flight">00:00:00</span></div>
         <div class="st-row"><span>Oturum Süresi</span><span class="st-val" data-s="session">00:00:00</span></div>
         <div class="st-row"><span>Kat Edilen Mesafe</span><span class="st-val" data-s="dist">0.0 NM</span></div>
+        <div class="st-row"><span>Dış Sıcaklık (OAT / TAT)</span><span class="st-val cyan" data-s="temp">—</span></div>
 
         <div class="st-sec">Anlık Karo İndirme</div>
         <div class="st-row"><span>İndirme Hızı</span><span class="st-val cyan" data-s="rate">0 KB/s</span></div>
@@ -115,6 +116,7 @@ export class StatsPanel {
     const rate = netStats.rateBps();
     this.history.push(rate);
     if (this.history.length > 30) this.history.shift();
+    this._lastFm = fm;
     this.render(world?.terrain?.readyCount ?? 0, fps ?? 0);
   }
 
@@ -132,6 +134,13 @@ export class StatsPanel {
     f.flight.textContent = formatDuration(this.flightSec);
     f.session.textContent = formatDuration(this.sessionSec);
     f.dist.textContent = `${nm.toFixed(1)} NM (${(this.distM / 1000).toFixed(1)} km)`;
+    const fm = this._lastFm;
+    if (fm && f.temp) {
+      const oat = Math.round(15 - 0.0065 * Math.min(Math.max(0, fm.pos.y), 11000) + (fm.isaDev || 0));
+      const tat = Math.round(oat + (fm.tas * fm.tas) / 2010);
+      const sign = (n) => (n > 0 ? `+${n}` : `${n}`);
+      f.temp.textContent = `${sign(oat)}°C / ${sign(tat)}°C`;
+    }
     f.rate.textContent = formatRate(rate);
     f.dlstate.textContent = active > 0
       ? `${active} karo iniyor · tepe ${formatRate(netStats.peakBps)}`

@@ -312,7 +312,7 @@ function frame() {
   if (!paused && !menuOpen) {
     input.update(dt, fm);
     ap.update(dt, input.override || {});
-    fm.inCloud = Math.max(clouds.densityAt(fm.pos), clouds.turbAt(fm.pos) * 0.9);   // storm cells are much rougher
+    fm.inCloud = Math.max(clouds.densityAt(fm.pos), clouds.turbAt(fm.pos) * 0.6);   // storm cells are much rougher
     fm.step(dt);
     const cab = cabin.update(dt, fm, ap);
     if (cab.shaker) rig.shake = Math.max(rig.shake, 0.25);
@@ -332,11 +332,14 @@ function frame() {
   rig.update(dt, fm, aircraft.geometry);
   world.onResize(window.innerHeight * renderer.getPixelRatio(), camera.fov);
   world.followShadow(fm.pos);
-  world.update(dt, camera, clouds.densityAt(camera.position));
+  const camCloud = Math.max(clouds.densityAt(camera.position), clouds.densityAt(fm.pos) * 0.85);
+  world.update(dt, camera, camCloud);
   if (env) {
     env.update(dt, camera, fm, sound, paused || menuOpen);
     hud.envLabel = env.label;
+    hud.envDay = env.day;
   }
+  hud.cloudDensity = camCloud;
   aircraft.nightK = env ? env.night : 0;
   clouds.update(dt, camera);
   minimap?.update(dt, fm);

@@ -34,6 +34,19 @@ export class HUD {
     const g = this.g;
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     g.clearRect(0, 0, this.w, this.h);
+    // Volumetric in-cloud mist overlay (drawn behind HUD instruments so sky/sun genuinely white-out inside clouds)
+    const rawCloud = this.cloudDensity || 0;
+    this._cloudVeil = (this._cloudVeil || 0) + (rawCloud - (this._cloudVeil || 0)) * Math.min(1, dt * 4.5);
+    if (this._cloudVeil > 0.01) {
+      const v = Math.min(1, this._cloudVeil);
+      const day = this.envDay ?? 1;
+      const r = Math.round(28 + 204 * day), gr = Math.round(36 + 202 * day), b = Math.round(52 + 190 * day);
+      const grad = g.createRadialGradient(this.w / 2, this.h / 2, this.h * 0.08, this.w / 2, this.h / 2, Math.max(this.w, this.h) * 0.72);
+      grad.addColorStop(0, `rgba(${r},${gr},${b},${(v * 0.62).toFixed(3)})`);
+      grad.addColorStop(1, `rgba(${r},${gr},${b},${(v * 0.88).toFixed(3)})`);
+      g.fillStyle = grad;
+      g.fillRect(0, 0, this.w, this.h);
+    }
     this.fps += (1 / Math.max(dt, 1e-3) - this.fps) * 0.05;
     if (!this.visible) { this.layout?.syncHandles(false); return; }
     const compact = this.w < 900;
@@ -65,6 +78,8 @@ export class HUD {
     g.save(); g.translate(ix - 12, iy - 12);
     this.topBar(g, fm, rig);
     g.restore();
+    // top-right environment + outside air temperature (OAT) pill
+    this.envStrip(g, fm);
     if (this.attribution) {
       g.font = '11px "Segoe UI", sans-serif'; g.textAlign = 'center'; g.fillStyle = 'rgba(255,255,255,0.6)';
       g.fillText(this.attribution, this.w / 2, this.h - 6);
@@ -363,6 +378,35 @@ export class HUD {
     g.beginPath(); g.roundRect(12, 12, tw + 20, 24, 6); g.fill();
     g.fillStyle = 'rgba(230,240,255,0.85)'; g.fillText(txt, 22, 28);
     this.firStrip(g);
+  }
+
+  envStrip(g, fm) {
+    const oat = Math.round(15 - 0.0065 * Math.min(Math.max(0, fm.pos.y), 11000) + (fm.isaDev || 0));
+    const tat = Math.round(oat + (fm.tas * fm.tas) / 2010);
+    const sign = (n) => (n > 0 ? `+${n}` : `${n}`);
+    const base = this.envLabel ? `${this.envLabel}  ·  ` : '';
+    const temp = `OAT ${sign(oat)}°C / TAT ${sign(tat)}°C`;
+    const icing = oat <= 0 && (fm.inCloud || 0) > 0.25 ? '  ·  BUZLANMA' : '';
+    const full = base + temp + icing;
+    g.save();
+    g.font = `12px ${FONT}`;
+    const w = g.measureText(full).width + 20;
+    const x = this.w - 16 - w, y = 12;
+    g.fillStyle = 'rgba(6,10,16,0.68)';
+    g.strokeStyle = icing ? 'rgba(49,208,255,0.75)' : 'rgba(140,170,210,0.28)';
+    g.lineWidth = 1;
+    g.beginPath(); g.roundRect(x, y, w, 24, 6); g.fill(); g.stroke();
+    g.textAlign = 'left';
+    g.fillStyle = 'rgba(230,240,255,0.88)';
+    g.fillText(base, x + 10, y + 16);
+    const bw = g.measureText(base).width;
+    g.fillStyle = oat <= 0 ? C.cyan : '#ffd27d';
+    g.fillText(temp, x + 10 + bw, y + 16);
+    if (icing) {
+      g.fillStyle = C.cyan;
+      g.fillText(icing, x + 10 + bw + g.measureText(temp).width, y + 16);
+    }
+    g.restore();
   }
 
   // ---------------------------------------------------------------- FIR

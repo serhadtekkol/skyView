@@ -147,7 +147,8 @@ export class Clouds {
           vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
           vSunSide = dot(normalize(sunDir), normalize(camRight));
           float d = length(mv.xyz);
-          vAlpha = params.w * smoothstep(params.x * 0.25, params.x * 0.9, d);
+          // keep cloud puffs solid right up to the wings/cockpit so clouds never vanish before entry
+          vAlpha = params.w * smoothstep(params.x * 0.03, params.x * 0.28, d);
           vShade = params.z;
           vUv = uv;
           gl_Position = projectionMatrix * mv;
@@ -286,8 +287,9 @@ export class Clouds {
     let t = 0;
     for (const c of this.clusters) {
       const h = Math.hypot(pos.x - c.x - ox, pos.z - c.z - oz);
-      const reach = c.r * (c.storm ? 1.25 : 0.9);
-      if (h > reach || pos.y < c.y0 - 300 || pos.y > c.y1 + 200) continue;
+      const reach = c.r * (c.storm ? 1.15 : 0.85);
+      const yPad = c.storm ? 150 : 40;
+      if (h > reach || pos.y < c.y0 - yPad || pos.y > c.y1 + 80) continue;
       const k = (1 - h / reach) * (c.storm ? 3 : 1);
       t = Math.max(t, k);
     }
