@@ -49,32 +49,34 @@ export class HUD {
     }
     this.fps += (1 / Math.max(dt, 1e-3) - this.fps) * 0.05;
     if (!this.visible) { this.layout?.syncHandles(false); return; }
-    const compact = this.w < 900;
-    const s = compact ? 0.72 : Math.min(1.15, Math.max(0.85, this.h / 950));
+    const compact = this.w < 1180;
+    const baseS = compact ? Math.min(0.86, Math.max(0.58, this.w / 1380)) : Math.min(1.12, Math.max(0.82, this.h / 950));
     const L = this.layout;
-    const at = (id, dx, dy, w, h, tip) => (L ? L.place(id, dx, dy, w, h, tip) : [dx, dy]);
-    let [px, py] = at('pfd', 16, this.h - 16 - 300 * s, 470 * s, 300 * s, 'PFD · Ana uçuş göstergesi|Sürükle: taşı · çift tık: varsayılan yer');
+    const sc = (id) => (L ? L.scaleOf(id, baseS) : baseS);
+    const at = (id, dx, dy, w, h, tip, res = true) => (L ? L.place(id, dx, dy, w, h, tip, res) : [dx, dy]);
+    const sPfd = sc('pfd'), sEicas = sc('eicas'), sNd = sc('nd');
+    let [px, py] = at('pfd', 16, this.h - 16 - 300 * sPfd, 470 * sPfd, 300 * sPfd, 'PFD · Ana uçuş göstergesi|Sürükle: taşı · sağ alt köşe: boyutlandır · çift tık: sıfırla');
     g.save();
-    g.translate(px, py); g.scale(s, s);
+    g.translate(px, py); g.scale(sPfd, sPfd);
     this.pfd(g, fm);
     g.restore();
-    [px, py] = at('eicas', this.w - 16 - 330 * s, this.h - 16 - 300 * s, 330 * s, 300 * s, 'EICAS · Motor ve sistemler|Sürükle: taşı · çift tık: varsayılan yer');
+    [px, py] = at('eicas', this.w - 16 - 330 * sEicas, this.h - 16 - 300 * sEicas, 330 * sEicas, 300 * sEicas, 'EICAS · Motor ve sistemler|Sürükle: taşı · sağ alt köşe: boyutlandır · çift tık: sıfırla');
     g.save();
-    g.translate(px, py); g.scale(s, s);
+    g.translate(px, py); g.scale(sEicas, sEicas);
     this.eicas(g, fm);
     g.restore();
     // navigation / weather-radar display: between PFD and EICAS if there is room, else above the EICAS
     if (this.nd && this.nd.visible) {
-      const left = 16 + 470 * s, right = this.w - 16 - 330 * s, ndW = 340 * s;
+      const left = 16 + 470 * sPfd, right = this.w - 16 - 330 * sEicas, ndW = 340 * sNd;
       let nx, ny;
-      if (right - left >= ndW + 24) { nx = (left + right - ndW) / 2; ny = this.h - 16 - 320 * s; }
-      else { nx = this.w - 16 - ndW; ny = this.h - 16 - 300 * s - 12 - 320 * s; }
-      [nx, ny] = at('nd', nx, ny, ndW, 320 * s, 'ND · Navigasyon ve hava radarı|Sürükle: taşı · çift tık: varsayılan yer · [0] aç/kapa · [9] menzil');
-      this.nd.draw(g, nx, ny, s, fm, this.clouds, this.ap, dt);
-      this.ndRect = { x: nx, y: ny, w: ndW, h: 320 * s };
+      if (right - left >= ndW + 20) { nx = (left + right - ndW) / 2; ny = this.h - 16 - 320 * sNd; }
+      else { nx = this.w - 16 - ndW; ny = this.h - 16 - 300 * sEicas - 12 - 320 * sNd; }
+      [nx, ny] = at('nd', nx, ny, ndW, 320 * sNd, 'ND · Navigasyon ve hava radarı|Sürükle: taşı · sağ alt köşe: boyutlandır · çift tık: sıfırla · [0] aç/kapa');
+      this.nd.draw(g, nx, ny, sNd, fm, this.clouds, this.ap, dt);
+      this.ndRect = { x: nx, y: ny, w: ndW, h: 320 * sNd };
     }
     // info strip (camera/FPS + FIR + FIR card) as one movable block
-    const [ix, iy] = at('info', 12, 12, 380, 18, 'Bilgi şeridi · Kamera, FIR|Sürükle: taşı · çift tık: varsayılan yer');
+    const [ix, iy] = at('info', 12, 12, 380, 18, 'Bilgi şeridi · Kamera, FIR|Sürükle: taşı · çift tık: varsayılan yer', false);
     g.save(); g.translate(ix - 12, iy - 12);
     this.topBar(g, fm, rig);
     g.restore();

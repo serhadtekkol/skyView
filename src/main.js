@@ -123,7 +123,7 @@ async function startWorld(site, mode) {
   hud.clouds = clouds;
   if (!hud.nd) hud.nd = new NavDisplay();
   if (world.parkingSpots) addParkedTraffic();
-  if (world.frame) { minimap = new MiniMap(world); layout.dom('minimap', minimap.box, minimap.box.querySelector('.mm-grip')); }
+  if (world.frame) { minimap = new MiniMap(world); layout.dom('minimap', minimap.box, minimap.box.querySelector('.mm-grip'), { onResize: () => minimap.map.invalidateSize() }); }
   if (world.frame) {
     fms = new FMS({ airports, world, fm, ap, minimap, hud, onToggle: v => mcp?.setFmsOpen(v) });
     layout.dom('fms', fms.el, fms.el.querySelector('.fms-grip'));
