@@ -400,13 +400,14 @@ function buildGenericIcon(id) {
 }
 
 const BUILDERS = {
-  BOGAZ1: () => ({ ...buildSuspensionBridge({ span: 1074, totalLen: 1560, towerH: 165, ledColor: 0xff3b70 }), heading: 118 }),
-  FSMKPR: () => ({ ...buildSuspensionBridge({ span: 1090, totalLen: 1510, towerH: 165, ledColor: 0x31d0ff }), heading: 108 }),
-  YSSKPR: () => ({ ...buildSuspensionBridge({ span: 1408, totalLen: 2164, deckW: 58, towerH: 322, aFrame: true, ledColor: 0xffbe3b }), heading: 100 }),
-  OSMGZ:  () => ({ ...buildSuspensionBridge({ span: 1550, totalLen: 2682, towerH: 252, ledColor: 0x3cf07a }), heading: 180 }),
-  CNK1915:() => ({ ...buildSuspensionBridge({ span: 2023, totalLen: 3563, deckW: 45, towerH: 318, redWhite: true, ledColor: 0xff3b30 }), heading: 132 }),
-  GOLDGT: () => ({ ...buildSuspensionBridge({ span: 1280, totalLen: 2737, towerH: 227, towerColor: 0xc0362c, deckColor: 0x9c2c24, ledColor: 0xffb347 }), heading: 15 }),
-  TWRBRG: () => ({ ...buildSuspensionBridge({ span: 75, totalLen: 244, deckW: 20, deckH: 12, towerH: 65, towerColor: 0xc4b59d, ledColor: 0x31d0ff }), heading: 22 }),
+  // Suspension bridges positioned by exact GPS coordinates of their two main towers [t1, t2] for exact satellite alignment
+  BOGAZ1: (span) => buildSuspensionBridge({ span: span || 1074, totalLen: (span || 1074) * 1.45, towerH: 165, ledColor: 0xff3b70 }),
+  FSMKPR: (span) => buildSuspensionBridge({ span: span || 1090, totalLen: (span || 1090) * 1.38, towerH: 165, ledColor: 0x31d0ff }),
+  YSSKPR: (span) => buildSuspensionBridge({ span: span || 1408, totalLen: (span || 1408) * 1.54, deckW: 58, towerH: 322, aFrame: true, ledColor: 0xffbe3b }),
+  OSMGZ:  (span) => buildSuspensionBridge({ span: span || 1550, totalLen: (span || 1550) * 1.73, towerH: 252, ledColor: 0x3cf07a }),
+  CNK1915:(span) => buildSuspensionBridge({ span: span || 2023, totalLen: (span || 2023) * 1.76, deckW: 45, towerH: 318, redWhite: true, ledColor: 0xff3b30 }),
+  GOLDGT: (span) => buildSuspensionBridge({ span: span || 1280, totalLen: (span || 1280) * 2.1, towerH: 227, towerColor: 0xc0362c, deckColor: 0x9c2c24, ledColor: 0xffb347 }),
+  TWRBRG: (span) => buildSuspensionBridge({ span: span || 75, totalLen: 244, deckW: 20, deckH: 12, towerH: 65, towerColor: 0xc4b59d, ledColor: 0x31d0ff }),
   ANITKB: () => ({ ...buildAnitkabir(), heading: 38 }),
   CAMLIC: () => ({ ...buildModernTower(369, true), heading: 0 }),
   ATAKUL: () => ({ ...buildModernTower(125, false), heading: 0 }),
@@ -423,6 +424,17 @@ const BUILDERS = {
   BIGBEN: () => ({ ...buildGenericIcon('BIGBEN'), heading: 0 }),
   TAJMAH: () => ({ ...buildGenericIcon('TAJMAH'), heading: 0 }),
   OPERA:  () => ({ ...buildGenericIcon('OPERA'), heading: 35 }),
+};
+
+// Exact real-world GPS coordinates of the two main towers for each bridge (locks 3D span & angle directly onto satellite imagery)
+const BRIDGE_TOWERS = {
+  BOGAZ1:  [[41.04640, 29.02750], [41.04410, 29.04160]],
+  FSMKPR:  [[41.09215, 29.05480], [41.09025, 29.06770]],
+  YSSKPR:  [[41.20390, 29.10330], [41.20230, 29.12010]],
+  OSMGZ:   [[40.76145, 29.51535], [40.74750, 29.51535]],
+  CNK1915: [[40.34585, 26.62745], [40.33408, 26.64588]],
+  GOLDGT:  [[37.81414, -122.47797], [37.82563, -122.47908]],
+  TWRBRG:  [[51.50516, -0.07568], [51.50578, -0.07512]],
 };
 
 export class Landmark3DManager {
@@ -448,16 +460,31 @@ export class Landmark3DManager {
 
       let entry = this.spawned.get(lm.id);
       if (!entry) {
-        const built = BUILDERS[lm.id]();
-        built.group.rotation.y = -(built.heading || 0) * D2R;
-        const y0 = built.onWater ? 0 : (terrain?.groundHeight(p.x, p.z) ?? 0);
-        built.group.position.set(p.x, y0, p.z);
+        const tw = BRIDGE_TOWERS[lm.id];
+        let built, x = p.x, z = p.z, rotY = 0;
+        if (tw) {
+          const c1 = frame.toLocal(tw[0][0], tw[0][1]);
+          const c2 = frame.toLocal(tw[1][0], tw[1][1]);
+          x = (c1.x + c2.x) / 2;
+          z = (c1.z + c2.z) / 2;
+          const dx = c2.x - c1.x, dz = c2.z - c1.z;
+          const span = Math.hypot(dx, dz);
+          // Local bridge deck runs along +Z / -Z; align +Z to vector (dx, dz)
+          rotY = Math.atan2(dx, dz);
+          built = BUILDERS[lm.id](span);
+        } else {
+          built = BUILDERS[lm.id]();
+          rotY = -(built.heading || 0) * D2R;
+        }
+        built.group.rotation.y = rotY;
+        const y0 = built.onWater ? 0 : (terrain?.groundHeight(x, z) ?? 0);
+        built.group.position.set(x, y0, z);
         this.world.scene.add(built.group);
         for (const nm of built.nightMats) {
           nm.mat.emissiveIntensity = nm.max * (this.world.env?.night || 0);
           this.world.nightMats.push(nm);
         }
-        entry = { ...built, x: p.x, z: p.z, settled: built.onWater };
+        entry = { ...built, x, z, settled: built.onWater };
         this.spawned.set(lm.id, entry);
       } else if (!entry.settled && terrain) {
         // Re-snap height once high-res DEM tile arrives around the landmark
