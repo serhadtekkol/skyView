@@ -21,7 +21,8 @@ const CSS = `
 
 const CHANNELS = [
   ['master', 'Ana Ses'],
-  ['engine', 'Motor / Çevre'],
+  ['engine', 'Motor'],
+  ['ambient', 'Dış Hava (Rüzgâr/Yağmur)'],
   ['alerts', 'Kokpit Uyarıları'],
   ['voice', 'Sesli Bildirim'],
 ];
@@ -44,7 +45,7 @@ export class VolumePanel {
       <div class="vol-pop">
         ${CHANNELS.map(([k, lbl]) => `
           <div class="vol-row">
-            <span>${lbl}</span><span class="vol-val" data-v="${k}"></span>
+            <span>${lbl}</span><span class="vol-val" data-v="${k}" data-chmute="${k}" style="cursor:pointer" title="Tıkla: kapat / aç"></span>
             <input type="range" min="0" max="100" step="5" data-ch="${k}">
           </div>`).join('')}
       </div>`;
@@ -58,6 +59,16 @@ export class VolumePanel {
         sound.setVolume(inp.dataset.ch, Number(inp.value) / 100);
       });
       inp.addEventListener('keydown', e => e.stopPropagation());
+    });
+    this._prevVol = {};
+    el.querySelectorAll('[data-chmute]').forEach(badge => {
+      badge.addEventListener('click', () => {
+        sound.init();
+        const ch = badge.dataset.chmute;
+        const cur = sound.getVolume(ch);
+        if (cur > 0) { this._prevVol[ch] = cur; sound.setVolume(ch, 0); }
+        else sound.setVolume(ch, this._prevVol[ch] || 1);
+      });
     });
     tips(el, {
       '[data-a="mute"]': 'Ses aç/kapa|Kısayol: [M] sessiz, [,] / [.] ses -/+ %10',

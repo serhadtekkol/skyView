@@ -10,20 +10,21 @@ function loadAudioPrefs() {
       return {
         master: clamp(Number(raw.master ?? 0.7), 0, 1),
         engine: clamp(Number(raw.engine ?? 1), 0, 1),
+        ambient: clamp(Number(raw.ambient ?? 1), 0, 1),
         alerts: clamp(Number(raw.alerts ?? 1), 0, 1),
         voice: clamp(Number(raw.voice ?? 1), 0, 1),
         muted: !!raw.muted,
       };
     }
   } catch { /* ignore */ }
-  return { master: 0.7, engine: 1, alerts: 1, voice: 1, muted: false };
+  return { master: 0.7, engine: 1, ambient: 1, alerts: 1, voice: 1, muted: false };
 }
 
 export class Sound {
   constructor() {
     this.ctx = null;
     const prefs = loadAudioPrefs();
-    this.volumes = { master: prefs.master, engine: prefs.engine, alerts: prefs.alerts, voice: prefs.voice };
+    this.volumes = { master: prefs.master, engine: prefs.engine, ambient: prefs.ambient, alerts: prefs.alerts, voice: prefs.voice };
     this.muted = prefs.muted;
     this.calls = new Set();
     this.lastRa = 1e9;
@@ -66,6 +67,7 @@ export class Sound {
     const t = this.ctx.currentTime;
     this.master.gain.setTargetAtTime(this.muted ? 0 : this.volumes.master, t, 0.02);
     this.engineBus.gain.setTargetAtTime(this.volumes.engine, t, 0.02);
+    this.ambientBus.gain.setTargetAtTime(this.volumes.ambient, t, 0.02);
     this.alertsBus.gain.setTargetAtTime(this.volumes.alerts, t, 0.02);
   }
 
@@ -79,6 +81,10 @@ export class Sound {
     this.engineBus = ctx.createGain();
     this.engineBus.gain.value = this.volumes.engine;
     this.engineBus.connect(this.master);
+
+    this.ambientBus = ctx.createGain();
+    this.ambientBus.gain.value = this.volumes.ambient;
+    this.ambientBus.connect(this.master);
 
     this.alertsBus = ctx.createGain();
     this.alertsBus.gain.value = this.volumes.alerts;
@@ -103,10 +109,10 @@ export class Sound {
     this.hissF = ctx.createBiquadFilter(); this.hissF.type = 'bandpass'; this.hissF.frequency.value = 2500; this.hissF.Q.value = 0.7;
     this.hissG = ctx.createGain(); this.hissG.gain.value = 0;
     src(1.3).connect(this.hissF).connect(this.hissG).connect(this.engineBus);
-    // wind
+    // wind (routed to exterior ambient bus)
     this.windF = ctx.createBiquadFilter(); this.windF.type = 'bandpass'; this.windF.Q.value = 0.5; this.windF.frequency.value = 600;
     this.windG = ctx.createGain(); this.windG.gain.value = 0;
-    src(0.8).connect(this.windF).connect(this.windG).connect(this.engineBus);
+    src(0.8).connect(this.windF).connect(this.windG).connect(this.ambientBus);
     // runway rumble
     this.rollF = ctx.createBiquadFilter(); this.rollF.type = 'lowpass'; this.rollF.frequency.value = 120;
     this.rollG = ctx.createGain(); this.rollG.gain.value = 0;
@@ -120,7 +126,7 @@ export class Sound {
     if (!this.rainG) {
       const f = this.ctx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 1800;
       this.rainG = this.ctx.createGain(); this.rainG.gain.value = 0;
-      this.noiseSrc(1.7).connect(f).connect(this.rainG).connect(this.engineBus);
+      this.noiseSrc(1.7).connect(f).connect(this.rainG).connect(this.ambientBus);
     }
     this.rainG.gain.setTargetAtTime(Math.min(0.35, k * 0.22), this.ctx.currentTime, 0.4);
   }
@@ -138,7 +144,7 @@ export class Sound {
     const g = ctx.createGain(); const peak = Math.max(0.08, 1.2 - distM / 25000);
     g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + 0.08 + distM / 40000);
     g.gain.exponentialRampToValueAtTime(peak * 0.5, t + 0.9); g.gain.exponentialRampToValueAtTime(0.0001, t + 3.8);
-    src.connect(f).connect(g).connect(this.engineBus); src.start(t); src.stop(t + 4);
+    src.connect(f).connect(g).connect(this.ambientBus); src.start(t); src.stop(t + 4);
   }
 
   toggleMute() {
