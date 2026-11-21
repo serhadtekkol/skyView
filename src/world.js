@@ -20,6 +20,7 @@ function windowGlow(size, cols, rows, litShare = 0.6) {
 }
 import { LocalFrame } from './geo.js';
 import { RealTerrain, IMAGERY_ATTRIBUTION } from './realterrain.js';
+import { Landmark3DManager } from './landmark3d.js';
 
 export { makeGlowMaterial } from './airport.js';
 export const AIRPORT_ELEV = 30;            // synthetic world airport elevation
@@ -119,6 +120,8 @@ export class World {
     onStatus('Uydu görüntüleri indiriliyor…');
     const p = new THREE.Vector3(this.spawn.x, this.spawn.elev + (s.kind === 'free' ? 1500 : 30), this.spawn.z);
     await this.terrain.preload(p, n => onStatus(`Uydu görüntüleri indiriliyor… ${n} karo`));
+    this.landmarks3d = new Landmark3DManager(this);
+    this.landmarks3d.update(99, p);
   }
 
   async ensureRouteCoverage(points) {
@@ -455,5 +458,6 @@ export class World {
     f.color.copy(this.fogColor).lerp(new THREE.Color(0xd7dde4), Math.min(1, cloudDensity * 1.5));
     for (const r of this.runways) updateRunwayLights(r, camera, this.time);
     this.terrain?.update(camera.position);
+    this.landmarks3d?.update(dt, camera.position);
   }
 }
