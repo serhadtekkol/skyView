@@ -160,6 +160,55 @@ export class Environment {
     this.nightDome.frustumCulled = false;
     scene.add(this.nightDome);
 
+    // HDR sun disc + Mie atmospheric corona + golden-hour horizon scatter (additive over Sky)
+    this.sunDome = new THREE.Mesh(
+      new THREE.SphereGeometry(18500, 48, 28),
+      new THREE.ShaderMaterial({
+        side: THREE.BackSide, transparent: true, depthWrite: false, fog: false,
+        blending: THREE.AdditiveBlending,
+        uniforms: {
+          uSunDir: { value: new THREE.Vector3(0, 0.5, -1) },
+          uSunCol: { value: new THREE.Color(1.0, 0.94, 0.82) },
+          uGlowCol: { value: new THREE.Color(1.0, 0.58, 0.24) },
+          uIntensity: { value: 1.0 },
+          uGolden: { value: 0.0 },
+        },
+        vertexShader: /* glsl */`
+          varying vec3 vDir;
+          void main() {
+            vDir = normalize(position);
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }`,
+        fragmentShader: /* glsl */`
+          uniform vec3 uSunDir, uSunCol, uGlowCol;
+          uniform float uIntensity, uGolden;
+          varying vec3 vDir;
+          void main() {
+            if (uIntensity <= 0.001) discard;
+            vec3 d = normalize(vDir);
+            vec3 s = normalize(uSunDir);
+            float mu = max(dot(d, s), 0.0);
+            // mask below horizon softly so sun/glow doesn't bleed under the earth
+            float above = smoothstep(-0.04, 0.03, d.y);
+            // crisp HDR solar disc (> 6.0 linear) so high-threshold bloom halos the sun without blooming the fuselage
+            float disc = smoothstep(0.99952, 0.99986, mu) * 6.8;
+            // tight hot inner corona + warm Mie aureole
+            float corona = pow(mu, 240.0) * 1.95 + pow(mu, 32.0) * (0.20 + 0.24 * uGolden);
+            float wideMie = pow(mu, 6.0) * (0.03 + 0.09 * uGolden);
+            // warm golden-hour atmospheric horizon scatter band concentrated toward sun azimuth
+            vec2 dh = normalize(vec2(d.x, d.z) + vec2(1e-5, 0.0));
+            vec2 sh = normalize(vec2(s.x, s.z) + vec2(1e-5, 0.0));
+            float az = max(dot(dh, sh), 0.0);
+            float horizBand = exp(-max(d.y, 0.0) * 8.0) * (0.14 + 0.86 * pow(az, 2.2)) * uGolden * 0.34;
+            vec3 col = uSunCol * (disc + corona) + uGlowCol * (wideMie + horizBand);
+            gl_FragColor = vec4(col * uIntensity * above, 1.0);
+          }`,
+      }),
+    );
+    this.sunDome.renderOrder = -9;
+    this.sunDome.frustumCulled = false;
+    scene.add(this.sunDome);
+
     // moonlight
     this.moon = new THREE.DirectionalLight(0xaec6ff, 0);
     this.moon.position.copy(this.moonDir).multiplyScalar(1000);
@@ -227,9 +276,19 @@ export class Environment {
     const u = world.sky.material.uniforms;
     const skyElev = THREE.MathUtils.degToRad(Math.max(elev, 0.5));
     u.sunPosition.value.set(Math.cos(skyElev) * Math.sin(a), Math.sin(skyElev), -Math.cos(skyElev) * Math.cos(a)).normalize();
-    u.turbidity.value = w.precip ? 8 : 3.2 + golden * 2.2;
-    u.rayleigh.value = w.precip ? 0.6 : 1.25 + golden * 1.1;
-    u.mieCoefficient.value = w.precip ? 0.012 : 0.004 + golden * 0.004;
+    u.turbidity.value = w.precip ? 8 : 2.1 + golden * 1.8;
+    u.rayleigh.value = w.precip ? 0.6 : 1.55 + golden * 1.35;
+    u.mieCoefficient.value = w.precip ? 0.012 : 0.0022 + golden * 0.0028;
+    u.mieDirectionalG.value = w.precip ? 0.72 : 0.86 + golden * 0.05;
+    if (u.uSkyGain) u.uSkyGain.value = w.precip ? 0.50 : lerp(0.38, 0.27, golden);
+    // HDR sun disc & golden-hour atmospheric scatter dome
+    const su = this.sunDome.material.uniforms;
+    su.uSunDir.value.copy(world.sunDir);
+    su.uSunCol.value.setRGB(1.0, 0.95, 0.86).lerp(new THREE.Color(1.0, 0.68, 0.30), golden);
+    su.uGlowCol.value.setRGB(1.0, 0.80, 0.54).lerp(new THREE.Color(1.0, 0.38, 0.09), golden);
+    su.uGolden.value = golden;
+    this.sunDomeBase = smoothstep(-1.5, 2.8, elev) * (w.precip ? 0.18 : 1.0);
+    su.uIntensity.value = this.sunDomeBase;
     // twilight / night dome
     const nu = this.nightDome.material.uniforms;
     nu.uOpacity.value = smoothstep(3.5, -5.5, elev);
@@ -240,25 +299,26 @@ export class Environment {
     nu.uMoonVis.value = this.night * (w.clouds.deck ? 0.12 : 1);
     world.rebuildEnvironment?.(this.night, w.precip ? 0.45 : 1);
     // lights
-    const sunCol = new THREE.Color().setRGB(1, 0.95, 0.86).lerp(new THREE.Color(1, 0.52, 0.24), golden);
+    const sunCol = new THREE.Color().setRGB(1, 0.95, 0.86).lerp(new THREE.Color(1, 0.54, 0.22), golden);
     world.sun.color.copy(sunCol);
-    this.sunBase = 3.4 * smoothstep(-1.5, 6, elev);
-    world.hemi.intensity = 0.16 + 0.24 * day;
-    world.hemi.color.setRGB(0.24, 0.36, 0.64).lerp(new THREE.Color(0.85, 0.65, 0.55), golden * 0.45).lerp(new THREE.Color(0.75, 0.84, 1), day);
-    world.hemi.groundColor.setRGB(0.05, 0.06, 0.09).lerp(new THREE.Color(0.29, 0.35, 0.23), day);
+    this.sunBase = (3.6 + golden * 0.6) * smoothstep(-1.5, 6, elev);
+    world.hemi.intensity = 0.16 + 0.26 * day;
+    world.hemi.color.setRGB(0.24, 0.36, 0.64).lerp(new THREE.Color(0.95, 0.68, 0.48), golden * 0.55).lerp(new THREE.Color(0.72, 0.84, 1), day * (1 - golden * 0.35));
+    world.hemi.groundColor.setRGB(0.05, 0.06, 0.09).lerp(new THREE.Color(0.32, 0.36, 0.26), day);
     this.moon.intensity = 0.42 * this.night * (w.precip ? 0.35 : 1);
-    this.scene.environmentIntensity = 0.22 + 0.65 * day;
-    this.renderer.toneMappingExposure = lerp(0.95, 0.85, day) * (w.precip ? 1.06 : 1);
-    // fog matched to horizon color (no harsh gray washout at dusk/night)
-    const dayFog = new THREE.Color(w.tint).lerp(new THREE.Color(0xc98f70), golden * (w.precip ? 0.2 : 0.6));
+    this.scene.environmentIntensity = 0.28 + 0.82 * day;
+    this.renderer.toneMappingExposure = lerp(0.98, 0.92 + golden * 0.08, day) * (w.precip ? 1.05 : 1);
+    this.postfx?.setEnvironment({ day, golden, night: this.night, precip: !!w.precip });
+    // fog matched to horizon color (warm golden-amber atmospheric haze at sunset/sunrise)
+    const dayFog = new THREE.Color(w.tint).lerp(new THREE.Color(0xe09b63), golden * (w.precip ? 0.22 : 0.72));
     const duskFog = new THREE.Color(0x202236);
     const nightFog = new THREE.Color(0x091222);
     world.fogColor.copy(nightFog).lerp(duskFog, dusk * 0.85).lerp(dayFog, day);
-    world.baseFogDensity = (w.precip ? 0.000028 : lerp(0.000021, 0.000028, day)) * w.fog;
-    // clouds: warm sunset tops at golden hour, cool moonlit tops from above at night
+    world.baseFogDensity = (w.precip ? 0.000028 : lerp(0.000020, 0.000026, day)) * w.fog;
+    // clouds: sculpted sunlit tops + warm golden-hour rim vs deep cool slate shadows
     if (this.clouds) {
-      const dayLit = new THREE.Color(1.55, 1.5, 1.42).lerp(new THREE.Color(1.65, 0.92, 0.56), golden * 0.8);
-      const daySh = new THREE.Color(0.52, 0.58, 0.68).lerp(new THREE.Color(0.32, 0.26, 0.42), golden * 0.65);
+      const dayLit = new THREE.Color(1.62, 1.56, 1.48).lerp(new THREE.Color(2.05, 1.12, 0.56), golden * 0.88);
+      const daySh = new THREE.Color(0.42, 0.50, 0.64).lerp(new THREE.Color(0.22, 0.22, 0.38), golden * 0.78);
       const nightLit = new THREE.Color(0.18, 0.23, 0.34);
       const nightSh = new THREE.Color(0.04, 0.06, 0.11);
       const lit = nightLit.clone().lerp(dayLit, day);
@@ -266,7 +326,7 @@ export class Environment {
       if (w.precip) sh.multiplyScalar(0.75);
       const deckTop = lit.clone().multiplyScalar(0.92);
       const deckBot = new THREE.Color(0.06, 0.08, 0.12).lerp(new THREE.Color(0.42, 0.45, 0.5).multiplyScalar(w.precip === 'snow' ? 1.25 : 1), day);
-      this.clouds.setLighting(lit, sh, deckTop, deckBot);
+      this.clouds.setLighting(lit, sh, deckTop, deckBot, golden);
       this.clouds.material.uniforms.sunDir.value.copy(this.night > 0.45 ? this.moonDir : world.sunDir);
     }
     this.stars.material.opacity = smoothstep(0.15, 0.95, this.night) * (w.clouds.deck ? 0.12 : 0.95);
@@ -285,11 +345,13 @@ export class Environment {
     const w = this.weather, world = this.world;
     this.stars.position.copy(camera.position);
     this.nightDome.position.copy(camera.position);
+    this.sunDome.position.copy(camera.position);
     // sun dimmed below an overcast deck, full above it
     const deck = this.clouds?.deckCfg;
     const below = deck ? 1 - smoothstep(deck.top - 50, deck.top + 150, camera.position.y) : 0;
     const dim = lerp(1, w.sun, deck ? below : (w.sun < 1 ? 1 : 0));
     world.sun.intensity = this.sunBase * dim;
+    this.sunDome.material.uniforms.uIntensity.value = (this.sunDomeBase || 0) * dim;
     world.baseFogDensity = 0.000028 * lerp(1, w.fog, deck ? below : 1);
     // precipitation follows the camera, only below the cloud base
     if (this.precip) {

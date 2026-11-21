@@ -12,13 +12,18 @@ function puffTexture() {
   for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
     const u = x / S * 2 - 1, v = y / S * 2 - 1;
     const r = Math.hypot(u, v);
-    const warp = fbm(n, u * 2.2 + 5, v * 2.2, 5) * 0.35;
-    let a = 1 - smoothstep(0.25, 1.0, r + warp);
-    a *= 0.75 + 0.25 * (fbm(n, u * 6, v * 6, 4) * 0.5 + 0.5);
-    // baked top lighting: brighter towards the top edge of the sprite (canvas y=0)
-    const light = Math.min(1, Math.max(0, 0.55 - v * 0.45 + fbm(n, u * 4 + 9, v * 4, 3) * 0.2));
+    const warp = fbm(n, u * 2.4 + 5, v * 2.4, 5) * 0.36;
+    const detail = fbm(n, u * 5.8 + 11, v * 5.8 - 3, 4);
+    let a = 1 - smoothstep(0.22, 0.96, r + warp);
+    a = Math.pow(Math.max(0, a), 0.85) * (0.72 + 0.28 * (detail * 0.5 + 0.5));
+    // R: vertical top-light, G: horizontal side normal (for sun-side lighting), B: billow crevice detail
+    const topL = Math.min(1, Math.max(0, 0.54 - v * 0.48 + detail * 0.24));
+    const sideN = Math.min(1, Math.max(0, 0.5 + u * 0.46 + fbm(n, u * 3.8 + 17, v * 3.8, 3) * 0.22));
+    const billow = Math.min(1, Math.max(0, 0.5 + detail * 0.55));
     const i = (y * S + x) * 4;
-    img.data[i] = light * 255; img.data[i + 1] = light * 255; img.data[i + 2] = light * 255;
+    img.data[i] = topL * 255;
+    img.data[i + 1] = sideN * 255;
+    img.data[i + 2] = billow * 255;
     img.data[i + 3] = Math.max(0, Math.min(1, a)) * 255;
   }
   ctx.putImageData(img, 0, 0);
@@ -117,15 +122,17 @@ export class Clouds {
       uniforms: {
         map: { value: puffTexture() },
         sunDir: { value: sunDir.clone() },
-        litColor: { value: new THREE.Color(1.55, 1.5, 1.42) },
-        shadowColor: { value: new THREE.Color(0.52, 0.58, 0.68) },
+        litColor: { value: new THREE.Color(1.62, 1.56, 1.48) },
+        shadowColor: { value: new THREE.Color(0.42, 0.50, 0.64) },
         fogColor: { value: fog.color },
         fogDensity: { value: fog.density },
         flash: { value: new THREE.Vector4(0, 0, 0, 0) },
+        uGolden: { value: 0.0 },
       },
       vertexShader: /* glsl */`
         attribute vec3 offset; attribute vec4 params;
-        varying vec2 vUv; varying float vShade; varying float vAlpha; varying vec3 vWorld;
+        varying vec2 vUv; varying float vShade; varying float vAlpha; varying vec3 vWorld; varying float vSunSide;
+        uniform vec3 sunDir;
         #include <common>
         #include <logdepthbuf_pars_vertex>
         void main(){
@@ -133,9 +140,12 @@ export class Clouds {
           float c = cos(params.y), s = sin(params.y);
           vec2 p = vec2(c*position.x - s*position.y, s*position.x + c*position.y) * params.x;
           // keep the baked "top light" pointing up-ish: only small rotations
-          p = mix(position.xy * params.x, p, 0.25);
+          p = mix(position.xy * params.x, p, 0.22);
           mv.xy += p;
           vWorld = offset;
+          // camera right vector in world space is row 0 of viewMatrix
+          vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
+          vSunSide = dot(normalize(sunDir), normalize(camRight));
           float d = length(mv.xyz);
           vAlpha = params.w * smoothstep(params.x * 0.25, params.x * 0.9, d);
           vShade = params.z;
@@ -144,8 +154,8 @@ export class Clouds {
           #include <logdepthbuf_vertex>
         }`,
       fragmentShader: /* glsl */`
-        uniform sampler2D map; uniform vec3 sunDir, litColor, shadowColor, fogColor; uniform float fogDensity; uniform vec4 flash;
-        varying vec2 vUv; varying float vShade; varying float vAlpha; varying vec3 vWorld;
+        uniform sampler2D map; uniform vec3 sunDir, litColor, shadowColor, fogColor; uniform float fogDensity, uGolden; uniform vec4 flash;
+        varying vec2 vUv; varying float vShade; varying float vAlpha; varying vec3 vWorld; varying float vSunSide;
         #include <common>
         #include <logdepthbuf_pars_fragment>
         void main(){
@@ -154,16 +164,26 @@ export class Clouds {
           float a = t.a * vAlpha;
           if (a < 0.004) discard;
           vec3 V = normalize(vWorld - cameraPosition);
-          float mu = dot(V, sunDir);
-          float silver = pow(max(mu, 0.0), 8.0) * (1.0 - t.a) * 1.6;      // bright edges when looking toward the sun
-          float lit = clamp(vShade * 0.65 + t.r * 0.55, 0.0, 1.0);
+          vec3 S = normalize(sunDir);
+          float mu = dot(V, S);
+          // directional sculpted shading: top light + sun-facing side light + billow crevice contrast
+          float sideTerm = (t.g - 0.5) * vSunSide * 0.55;
+          float rawLit = vShade * 0.62 + t.r * 0.48 + sideTerm + (t.b - 0.5) * 0.22;
+          float lit = smoothstep(0.10, 0.94, clamp(rawLit, 0.0, 1.0));
+          // Henyey-Greenstein forward scattering + crisp silver/gold lining on sun-facing edges
+          float g = 0.72;
+          float hg = (1.0 - g * g) / (4.0 * 3.14159 * pow(max(1.0 + g * g - 2.0 * g * mu, 0.05), 1.5));
+          float edgeMask = (1.0 - t.a * 0.78) * (0.45 + 0.55 * t.r);
+          float silver = (pow(max(mu, 0.0), 7.0) * 1.45 + hg * 0.32) * edgeMask * (1.0 + uGolden * 0.75);
+          // warm golden rim boost on sunlit tops during golden hour
           vec3 col = mix(shadowColor, litColor, lit) + litColor * silver;
-          col *= 0.92 + 0.12 * max(-mu, 0.0);                               // a little brighter down-sun
+          // Beer-powder soft highlight when looking down-sun
+          col *= 0.90 + 0.16 * max(-mu, 0.0);
           col += vec3(1.0, 1.0, 1.15) * flash.w * exp(-length(vWorld - flash.xyz) / 2600.0) * (0.55 + 0.45 * t.r);   // lightning
           float d = length(vWorld - cameraPosition);
-          float f = 1.0 - exp(-fogDensity * fogDensity * d * d * 0.55);
+          float f = 1.0 - exp(-fogDensity * fogDensity * d * d * 0.50);
           col = mix(col, fogColor, f);
-          gl_FragColor = vec4(col, a * (1.0 - f * 0.5));
+          gl_FragColor = vec4(col, a * (1.0 - f * 0.45));
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
         }`,
@@ -217,10 +237,11 @@ export class Clouds {
   }
 
   /** Cloud colours for the time of day / weather (linear RGB multipliers). */
-  setLighting(lit, shadow, deckLit, deckShadow) {
+  setLighting(lit, shadow, deckLit, deckShadow, golden = 0) {
     this.material.uniforms.litColor.value.copy(lit);
     this.material.uniforms.shadowColor.value.copy(shadow);
-    this.cirrus.material.color.copy(lit).multiplyScalar(0.62);
+    this.material.uniforms.uGolden.value = golden;
+    this.cirrus.material.color.copy(lit).multiplyScalar(0.62 + golden * 0.14);
     if (this.deck) {
       this.deck.over.material.color.copy(deckLit); this.deck.top.material.color.copy(deckLit);
       this.deck.under.material.color.copy(deckShadow); this.deck.base.material.color.copy(deckShadow).multiplyScalar(0.85);

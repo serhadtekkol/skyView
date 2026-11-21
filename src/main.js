@@ -19,6 +19,7 @@ import { MCP } from './mcp.js';
 import { FLEET, fleetById, fleetUrl } from './fleet.js';
 import { NavDisplay } from './nd.js';
 import { Environment, WEATHER, WEATHER_IDS } from './environment.js';
+import { PostFX } from './postfx.js';
 let env = null;
 import { FirLocator } from './fir.js';
 import { installTooltips } from './tooltip.js';
@@ -43,6 +44,7 @@ document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.5, 200000);
+const postfx = new PostFX(renderer, scene, camera);
 const hud = new HUD(document.getElementById('hud'));
 hud.layout = layout;
 const sound = new Sound();
@@ -63,7 +65,7 @@ const airports = await fetch('/assets/airports.json').then(async r => {
 let world = null, clouds = null, minimap = null, fms = null, running = false, paused = false, startMode = 'to';
 const menu = new Menu(startEl, airports, (site, mode) => startWorld(site, mode));
 let aircraft = null, fm = null, ap = null, mcp = null;
-window.sim = { rig, camera, renderer, scene, get world() { return world; }, get fm() { return fm; }, get ap() { return ap; }, get aircraft() { return aircraft; }, get fms() { return fms; }, get sound() { return sound; }, stats: statsPanel, netStats };
+window.sim = { rig, camera, renderer, scene, postfx, get world() { return world; }, get env() { return env; }, get fm() { return fm; }, get ap() { return ap; }, get aircraft() { return aircraft; }, get fms() { return fms; }, get sound() { return sound; }, stats: statsPanel, netStats };
 menu.setReady(true);
 menu.setStatus('Hazır. Havalimanı ve pist seç, ya da haritaya tıklayıp serbest uç.');
 
@@ -105,6 +107,7 @@ async function startWorld(site, mode) {
     bindCommands(input, fm, hud, sound);
     world = new World(scene, renderer, site);
     env = new Environment(scene, renderer, world, { hour: menu.hour, weather: menu.weather });
+    env.postfx = postfx;
     await world.init(t => menu.setStatus(t));
   } catch (e) {
     console.error(e);
@@ -218,6 +221,14 @@ window.addEventListener('keydown', (e) => {
     if (!e.repeat) statsPanel.toggle();
     return;
   }
+  if (e.code === 'F3') {
+    e.preventDefault();
+    if (!e.repeat) {
+      const on = postfx.toggle();
+      hud.message(on ? 'HDR + BLOOM AÇIK' : 'HDR + BLOOM KAPALI (performans)', on ? 'cyan' : 'white', 2.5);
+    }
+    return;
+  }
   if (e.code === 'Tab' || e.code === 'Backquote' || e.code === 'F8') {
     if (e.code === 'Tab' && e.target?.closest?.('#fms input, #fms select, #fms textarea')) return;
     e.preventDefault();
@@ -240,6 +251,7 @@ window.addEventListener('pointerdown', () => sound.init(), { once: true });
 
 function onResize() {
   renderer.setSize(window.innerWidth, window.innerHeight);
+  postfx.setSize(window.innerWidth, window.innerHeight);
   camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
   world?.onResize(window.innerHeight * renderer.getPixelRatio(), camera.fov);
   hud.resize();
@@ -319,7 +331,7 @@ function frame() {
   updateFir(dt);
   sound.update(fm, rig.mode, camera.position.distanceTo(fm.pos));
   aircraft.updateReflections(dt, renderer, scene);
-  renderer.render(scene, camera);
+  postfx.render();
   hud.lastDt = dt;
   hud.draw(dt, fm, rig);
   statsPanel.update(dt, fm, world, hud.fps, paused || menuOpen);

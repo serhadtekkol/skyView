@@ -173,14 +173,23 @@ export class World {
     const sky = new Sky();
     sky.scale.setScalar(20000);
     const u = sky.material.uniforms;
-    u.turbidity.value = 3.2; u.rayleigh.value = 1.25; u.mieCoefficient.value = 0.004; u.mieDirectionalG.value = 0.82;
+    u.turbidity.value = 2.2; u.rayleigh.value = 1.5; u.mieCoefficient.value = 0.002; u.mieDirectionalG.value = 0.86;
     u.sunPosition.value.copy(this.sunDir);
+    // Scale Preetham raw radiance so the sky keeps deep azure zenith & rich golden horizon at normal exposure (~0.9)
+    u.uSkyGain = { value: 0.44 };
+    sky.material.fragmentShader = sky.material.fragmentShader
+      .replace('void main() {', 'uniform float uSkyGain;\nvoid main() {')
+      .replace('#include <tonemapping_fragment>', 'gl_FragColor.rgb *= uSkyGain;\n#include <tonemapping_fragment>');
     sky.material.depthWrite = false; sky.renderOrder = -10; sky.frustumCulled = false;
     this.sky = sky; this.scene.add(sky);
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     const envScene = new THREE.Scene();
     const sky2 = new Sky(); sky2.scale.setScalar(1000);
-    Object.keys(u).forEach(k => { sky2.material.uniforms[k].value = u[k].value; });
+    sky2.material.uniforms.uSkyGain = { value: 0.44 };
+    sky2.material.fragmentShader = sky2.material.fragmentShader
+      .replace('void main() {', 'uniform float uSkyGain;\nvoid main() {')
+      .replace('#include <tonemapping_fragment>', 'gl_FragColor.rgb *= uSkyGain;\n#include <tonemapping_fragment>');
+    Object.keys(u).forEach(k => { if (sky2.material.uniforms[k]) sky2.material.uniforms[k].value = u[k].value; });
     envScene.add(sky2);
     this.envGround = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 16, 0, Math.PI * 2, Math.PI / 2 + 0.02, Math.PI / 2),
       new THREE.MeshBasicMaterial({ color: 0x3b4636, side: THREE.BackSide }));
@@ -195,7 +204,7 @@ export class World {
   /** Re-renders the image-based lighting after the sun / weather changed. */
   rebuildEnvironment(night = 0, clarity = 1) {
     const u = this.sky.material.uniforms;
-    Object.keys(u).forEach(k => { const v = u[k].value; this.sky2.material.uniforms[k].value = v?.clone ? v.clone() : v; });
+    Object.keys(u).forEach(k => { if (!this.sky2.material.uniforms[k]) return; const v = u[k].value; this.sky2.material.uniforms[k].value = v?.clone ? v.clone() : v; });
     this.envGround.material.color.setRGB(0.23, 0.27, 0.21).multiplyScalar((1 - night * 0.92) * (0.6 + 0.4 * clarity));
     const old = this.envRT;
     this.envRT = this.pmrem.fromScene(this.envScene, 0.02);
