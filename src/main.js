@@ -229,6 +229,15 @@ window.addEventListener('keydown', (e) => {
     }
     return;
   }
+  if (e.code === 'F4' && env) {
+    e.preventDefault();
+    if (!e.repeat) {
+      const s = env.cycleTimeScale();
+      hud.envLabel = env.label;
+      hud.message(s === 0 ? 'ZAMAN AKIŞI: SABİT' : s === 1 ? 'ZAMAN AKIŞI: 1x (Gerçek Zaman)' : `ZAMAN AKIŞI: ${s}x`, 'cyan', 2.5);
+    }
+    return;
+  }
   if (e.code === 'Tab' || e.code === 'Backquote' || e.code === 'F8') {
     if (e.code === 'Tab' && e.target?.closest?.('#fms input, #fms select, #fms textarea')) return;
     e.preventDefault();
@@ -324,7 +333,10 @@ function frame() {
   world.onResize(window.innerHeight * renderer.getPixelRatio(), camera.fov);
   world.followShadow(fm.pos);
   world.update(dt, camera, clouds.densityAt(camera.position));
-  env?.update(dt, camera, fm, sound);
+  if (env) {
+    env.update(dt, camera, fm, sound, paused || menuOpen);
+    hud.envLabel = env.label;
+  }
   aircraft.nightK = env ? env.night : 0;
   clouds.update(dt, camera);
   minimap?.update(dt, fm);

@@ -13,10 +13,12 @@ export const WEATHER = {
   snow:      { label: 'Karlı · soğuk',     clouds: { count: 50, storms: 0, deck: { agl: 600, thick: 1100, cover: 1 }, rain: 0.6 }, fog: 3.6, tint: 0xc2c9d0, sun: 0.38, wind: [20, 11], turb: 0.7, oat: -7, precip: 'snow', surface: 'snow', snow: 0.9, intensity: 1 },
 };
 export const WEATHER_IDS = Object.keys(WEATHER);
+export const TIME_SCALES = [1, 10, 60, 300, 0];
+const TIME_SCALE_KEY = 'skyview.timeScale';
 const MU = { dry: 1.0, wet: 0.62, snow: 0.36 };
 
 export function hourLabel(h) {
-  const hh = Math.floor(h) % 24, mm = Math.round((h % 1) * 60);
+  const hh = Math.floor(h) % 24, mm = Math.floor((h % 1) * 60);
   const part = h < 5 || h >= 21 ? 'Gece' : h < 7 ? 'Şafak' : h < 17 ? 'Gündüz' : h < 19.5 ? 'Akşamüstü' : 'Alacakaranlık';
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')} · ${part}`;
 }
@@ -96,6 +98,13 @@ export class Environment {
   constructor(scene, renderer, world, { hour = 14, weather = 'scattered' } = {}) {
     this.scene = scene; this.renderer = renderer; this.world = world;
     this.hour = hour; this.weatherId = WEATHER[weather] ? weather : 'scattered';
+    this.timeScale = 1;
+    try {
+      const saved = Number(localStorage.getItem(TIME_SCALE_KEY));
+      if (TIME_SCALES.includes(saved)) this.timeScale = saved;
+    } catch { /* ignore */ }
+    this._lastIblElev = null;
+    this._lastIblNight = null;
     this.uSnow = { value: 0 };
     this.time = 0; this.nextFlash = 3;
     // stars
@@ -261,9 +270,20 @@ export class Environment {
     mat.needsUpdate = true;
   }
 
-  setHour(h) { this.hour = ((h % 24) + 24) % 24; this.apply(); }
+  setHour(h) { this.hour = ((h % 24) + 24) % 24; this.apply({ rebuildIbl: true, updateSurface: false }); }
 
-  apply() {
+  setTimeScale(scale) {
+    this.timeScale = Math.max(0, Number(scale) || 0);
+    try { localStorage.setItem(TIME_SCALE_KEY, String(this.timeScale)); } catch { /* ignore */ }
+    return this.timeScale;
+  }
+
+  cycleTimeScale() {
+    const idx = TIME_SCALES.indexOf(this.timeScale);
+    return this.setTimeScale(TIME_SCALES[(idx + 1) % TIME_SCALES.length]);
+  }
+
+  apply({ rebuildIbl = true, updateSurface = true } = {}) {
     const w = this.weather, world = this.world;
     const { elev, azim } = sunAt(this.hour);
     this.sunElev = elev;
@@ -297,7 +317,14 @@ export class Environment {
     nu.uGlowAmt.value = (dusk * 0.9 + golden * 0.45) * (w.precip ? 0.25 : 1);
     nu.uSunDir.value.copy(world.sunDir);
     nu.uMoonVis.value = this.night * (w.clouds.deck ? 0.12 : 1);
-    world.rebuildEnvironment?.(this.night, w.precip ? 0.45 : 1);
+    const needIbl = rebuildIbl || this._lastIblElev == null
+      || Math.abs(elev - this._lastIblElev) >= 0.45
+      || Math.abs(this.night - this._lastIblNight) >= 0.04;
+    if (needIbl) {
+      this._lastIblElev = elev;
+      this._lastIblNight = this.night;
+      world.rebuildEnvironment?.(this.night, w.precip ? 0.45 : 1);
+    }
     // lights
     const sunCol = new THREE.Color().setRGB(1, 0.95, 0.86).lerp(new THREE.Color(1, 0.54, 0.22), golden);
     world.sun.color.copy(sunCol);
@@ -332,16 +359,20 @@ export class Environment {
     this.stars.material.opacity = smoothstep(0.15, 0.95, this.night) * (w.clouds.deck ? 0.12 : 0.95);
     // surface & snow
     this.uSnow.value = w.snow;
-    world.setSurface?.(w.surface);
+    if (updateSurface) world.setSurface?.(w.surface);
     world.setNight?.(this.night);
     // precipitation particles
     if (this.precip?.kind !== w.precip) { this.precip?.dispose(); this.precip = w.precip ? new Precip(this.scene, w.precip) : null; }
   }
 
-  setWeather(id) { if (WEATHER[id]) { this.weatherId = id; this.apply(); } }
+  setWeather(id) { if (WEATHER[id]) { this.weatherId = id; this.apply({ rebuildIbl: true, updateSurface: true }); } }
 
-  update(dt, camera, fm, sound) {
+  update(dt, camera, fm, sound, paused = false) {
     this.time += dt;
+    if (!paused && this.timeScale > 0 && dt > 0) {
+      this.hour = (this.hour + (dt * this.timeScale) / 3600) % 24;
+      this.apply({ rebuildIbl: false, updateSurface: false });
+    }
     const w = this.weather, world = this.world;
     this.stars.position.copy(camera.position);
     this.nightDome.position.copy(camera.position);
@@ -391,5 +422,8 @@ export class Environment {
     } else world.hemi.intensity = 0.16 + 0.24 * this.day;
   }
 
-  get label() { return `${hourLabel(this.hour)} · ${this.weather.label}`; }
+  get label() {
+    const rate = this.timeScale === 0 ? ' · Sabit' : this.timeScale === 1 ? '' : ` · ${this.timeScale}x`;
+    return `${hourLabel(this.hour)} · ${this.weather.label}${rate}`;
+  }
 }

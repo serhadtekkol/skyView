@@ -244,7 +244,7 @@ export const MENU_HTML = `
         <tr><td>M · , / .</td><td>Sessiz · ses kıs / aç</td></tr>
         <tr><td>C · 1-5 · V</td><td>Kamera · mini harita</td></tr>
         <tr><td>6 · 7</td><td>Günün saati (+1/-1) · hava durumu</td></tr>
-        <tr><td>F2 · F3</td><td>İstatistik paneli · HDR + Bloom aç/kapa</td></tr>
+        <tr><td>F2 · F3 · F4</td><td>İstatistik · HDR + Bloom · Zaman hızı (1x–300x)</td></tr>
         <tr><td>K · J · N</td><td>Piste dön · yaklaşma · harita</td></tr>
       </table>
     </div>
