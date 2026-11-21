@@ -104,6 +104,6 @@ export class Layout {
 
   resetAll() {
     this.pos = {}; save(this.pos);
-    document.querySelectorAll('#mcp, #minimap, #fms, #vol').forEach(p => Object.assign(p.style, { left: '', top: '', right: '', bottom: '', transform: '' }));
+    document.querySelectorAll('#mcp, #minimap, #fms, #vol, #stats').forEach(p => Object.assign(p.style, { left: '', top: '', right: '', bottom: '', transform: '' }));
   }
 }

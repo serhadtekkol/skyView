@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { lonToTX, latToTY, txToLon, tyToLat } from './geo.js';
 import { smoothstep, clamp, lerp } from './noise.js';
+import { netStats } from './netstats.js';
 
 // Streaming real-world terrain: Web-Mercator quadtree, Esri World Imagery draped on
 // AWS Terrain Tiles (Terrarium) elevation, with runway flattening.  Physics samples the
@@ -110,15 +111,20 @@ export class RealTerrain {
     e = { data: null, promise: null };
     this.elev.set(k, e);
     e.promise = (async () => {
+      netStats.begin();
       try {
         const r = await fetch(ELEV_URL(z, x, y), { mode: 'cors' });
         if (!r.ok) throw new Error(r.status);
-        const bmp = await createImageBitmap(await r.blob());
+        const blob = await r.blob();
+        netStats.record('elev', blob.size);
+        const bmp = await createImageBitmap(blob);
         const px = pixelsOf(bmp);
+        bmp.close?.();
         const d = new Float32Array(256 * 256);
         for (let i = 0; i < d.length; i++) d[i] = px[i * 4] * 256 + px[i * 4 + 1] + px[i * 4 + 2] / 256 - 32768;
         e.data = d;
       } catch (err) { e.data = new Float32Array(256 * 256); e.failed = true; }
+      finally { netStats.end(); }
       return e.data;
     })();
     return e.promise;
@@ -189,6 +195,23 @@ export class RealTerrain {
     return zone;
   }
 
+  async loadImagery(z, x, y) {
+    netStats.begin();
+    try {
+      const r = await fetch(IMG_URL(z, x, y), { mode: 'cors' });
+      if (!r.ok) throw new Error(r.status);
+      const blob = await r.blob();
+      netStats.record('imagery', blob.size);
+      const bmp = await createImageBitmap(blob);
+      const c = document.createElement('canvas');
+      c.width = bmp.width; c.height = bmp.height;
+      c.getContext('2d').drawImage(bmp, 0, 0);
+      bmp.close?.();
+      return new THREE.CanvasTexture(c);
+    } catch { return null; }
+    finally { netStats.end(); }
+  }
+
   // ------------------------------------------------------------------ tiles
   async buildTile(tile) {
     const { z, x, y } = tile;
@@ -197,7 +220,7 @@ export class RealTerrain {
     const nz = Math.min(z, NIGHT_Z), ns = z - nz;
     const [ed, tex, night] = await Promise.all([
       this.loadElev(ez, ex, ey),
-      this.texLoader.loadAsync(IMG_URL(z, x, y)).catch(() => null),
+      this.loadImagery(z, x, y),
       this.loadNight(nz, x >> ns, y >> ns),
     ]);
     if (tile.state !== 'loading') { tex?.dispose(); return; }   // evicted meanwhile
@@ -294,18 +317,23 @@ export class RealTerrain {
     e = { promise: null };
     this.night.set(k, e);
     e.promise = (async () => {
+      netStats.begin();
       try {
         const r = await fetch(NIGHT_URL(z, x, y), { mode: 'cors' });
         if (!r.ok) throw new Error(r.status);
-        const bmp = await createImageBitmap(await r.blob());
+        const blob = await r.blob();
+        netStats.record('night', blob.size);
+        const bmp = await createImageBitmap(blob);
         const c = document.createElement('canvas'); c.width = c.height = 256;
         const ctx = c.getContext('2d', { willReadFrequently: true });
         ctx.drawImage(bmp, 0, 0, 256, 256);
+        bmp.close?.();
         const px = ctx.getImageData(0, 0, 256, 256).data;
         const tex = new THREE.CanvasTexture(c);
         tex.colorSpace = THREE.SRGBColorSpace; tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
         return { tex, px };
       } catch { return null; }
+      finally { netStats.end(); }
     })();
     return e.promise;
   }

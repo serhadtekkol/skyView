@@ -9,6 +9,8 @@ import { HUD } from './hud.js';
 import { Sound } from './audio.js';
 import { CabinAudio } from './cabin.js';
 import { VolumePanel } from './volume.js';
+import { StatsPanel } from './stats.js';
+import { netStats } from './netstats.js';
 import { FMS } from './fms.js';
 import { Menu, MENU_HTML } from './menu.js';
 import { MiniMap } from './minimap.js';
@@ -47,15 +49,21 @@ const sound = new Sound();
 const cabin = new CabinAudio(sound);
 const volPanel = new VolumePanel(sound);
 layout.dom('volume', volPanel.el, volPanel.el.querySelector('.vol-grip'));
+const statsPanel = new StatsPanel();
+layout.dom('stats', statsPanel.el, statsPanel.el.querySelector('.st-grip'));
 const rig = new CameraRig(camera, renderer.domElement);
 const input = new Input();
 
 // ---------------------------------------------------------------- menu
-const airports = await fetch('/assets/airports.json').then(r => r.json());
+const airports = await fetch('/assets/airports.json').then(async r => {
+  const txt = await r.text();
+  netStats.record('assets', txt.length);
+  return JSON.parse(txt);
+});
 let world = null, clouds = null, minimap = null, fms = null, running = false, paused = false, startMode = 'to';
 const menu = new Menu(startEl, airports, (site, mode) => startWorld(site, mode));
 let aircraft = null, fm = null, ap = null, mcp = null;
-window.sim = { rig, camera, renderer, scene, get world() { return world; }, get fm() { return fm; }, get ap() { return ap; }, get aircraft() { return aircraft; }, get fms() { return fms; }, get sound() { return sound; } };
+window.sim = { rig, camera, renderer, scene, get world() { return world; }, get fm() { return fm; }, get ap() { return ap; }, get aircraft() { return aircraft; }, get fms() { return fms; }, get sound() { return sound; }, stats: statsPanel, netStats };
 menu.setReady(true);
 menu.setStatus('Hazır. Havalimanı ve pist seç, ya da haritaya tıklayıp serbest uç.');
 
@@ -134,6 +142,7 @@ function spawn(mode) {
   rig.setMode(rig.mode);
   minimap?.reset();
   cabin.reset();
+  statsPanel.resetFlight();
   curFir = undefined; firTimer = 1e9; aheadTimer = 1e9;
   ap.runway = sp.free ? null : { x: sp.x, z: sp.z, elev: sp.elev, heading: sp.heading };
   const curFt = (h) => Math.round(h * 3.28084 / 100) * 100;
@@ -204,6 +213,11 @@ function toggleFms() {
 }
 window.addEventListener('keydown', (e) => {
   if (!running || startEl.style.display !== 'none') return;
+  if (e.code === 'F2') {
+    e.preventDefault();
+    if (!e.repeat) statsPanel.toggle();
+    return;
+  }
   if (e.code === 'Tab' || e.code === 'Backquote' || e.code === 'F8') {
     if (e.code === 'Tab' && e.target?.closest?.('#fms input, #fms select, #fms textarea')) return;
     e.preventDefault();
@@ -308,5 +322,6 @@ function frame() {
   renderer.render(scene, camera);
   hud.lastDt = dt;
   hud.draw(dt, fm, rig);
+  statsPanel.update(dt, fm, world, hud.fps, paused || menuOpen);
 }
 frame();
