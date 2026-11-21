@@ -256,6 +256,7 @@ export class Autopilot {
         const vn = vnavTarget({
           ...this.route.route,
           constraints: this.navState.constraints,
+          activeConstraint: this.navState.activeConstraint,
           phase: this.vnavPhase,
           altFt: alt,
           distToDestNm: this.navState.distToDestM / NM,
@@ -274,17 +275,21 @@ export class Autopilot {
           const vErr = vn.altFt - alt;
           if (Math.abs(vErr) < 150) {
             vsT = clamp(vErr * 4.5, -1500, 1500);
-          } else {
+          } else if (vErr > 0) {
             const spdMargin = clamp((ias - (effSpd - 20)) / 20, 0.25, 1);
             vsT = clamp(vErr * 2.2, 400, 2200) * spdMargin;
+          } else {
+            // active waypoint constraint is below current altitude -> descend smoothly
+            vsT = clamp(vErr * 2.4, -2200, -400);
           }
         } else if (vn.phase === 'CRZ') {
           this.atMode = 'SPD';
-          vsT = clamp((vn.altFt - alt) * 4.5, -2000, 2000);
+          vsT = clamp((vn.altFt - alt) * 3.5, -2200, 2200);
         } else {
           this.atMode = 'SPD';
           const pathErr = vn.pathAltFt - alt;
-          if (alt <= vn.altFt + 80 && pathErr < 80) vsT = clamp((vn.altFt - alt) * 4.5, -1500, 1500);
+          if (pathErr > 150) vsT = clamp(pathErr * 2.2, 400, 2000);
+          else if (alt <= vn.altFt + 80 && pathErr < 80) vsT = clamp((vn.altFt - alt) * 4.5, -1500, 1500);
           else vsT = clamp(-gsMS * TAN3 * 60 * M2FT + pathErr * 3.0, -3500, 500);
         }
       } else {

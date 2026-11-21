@@ -20,6 +20,8 @@ const CSS = `
 #minimap .mm-bar button.on { border-color: #31d0ff; color: #31d0ff; }
 #minimap .mm-info { position: absolute; left: 6px; bottom: 6px; z-index: 1000; padding: 3px 7px; border-radius: 5px; background: rgba(6,10,16,0.75);
   font: 11px Consolas, monospace; color: #e8f1ff; pointer-events: none; }
+#minimap .mm-elev { position: absolute; left: 6px; bottom: 28px; z-index: 1000; padding: 3px 7px; border-radius: 5px; background: rgba(6,10,16,0.85);
+  border: 1px solid rgba(49,208,255,0.35); font: bold 11px Consolas, monospace; color: #9fe6ff; pointer-events: none; display: none; }
 #minimap .leaflet-control-attribution { font-size: 9px; background: rgba(0,0,0,0.45); color: #ccc; }
 #minimap .leaflet-control-attribution a { color: #9fe6ff; }
 .mm-firlbl { color: #31d0ff; font: bold 12px Consolas, monospace; text-align: center; text-shadow: 0 0 3px #000, 0 0 2px #000; white-space: nowrap; }
@@ -44,6 +46,7 @@ export class MiniMap {
     box.innerHTML = `<div class="mm-map"></div>
       <div class="mm-bar"><span class="mm-grip">⋮⋮</span><button data-a="follow" class="on" title="Uçağı takip et">◎</button><button data-a="in" title="Yakınlaş">+</button>
       <button data-a="out" title="Uzaklaş">−</button><button data-a="big" title="Büyüt / küçült">⤢</button></div>
+      <div class="mm-elev"></div>
       <div class="mm-info"></div>`;
     document.body.appendChild(box);
     // keep camera-drag / wheel events from reaching the 3D view
@@ -84,6 +87,38 @@ export class MiniMap {
       else if (a === 'big') { box.classList.toggle('big'); setTimeout(() => map.invalidateSize(), 220); }
     });
     this.info = box.querySelector('.mm-info');
+    this.elevEl = box.querySelector('.mm-elev');
+    this._elevTimer = null;
+    this._elevSeq = 0;
+    const fmtElev = (m) => {
+      if (m == null) return 'YER: …';
+      if (m <= 1) return 'DENİZ · 0 ft (0 m)';
+      const ft = Math.round(m * 3.28084);
+      return `YER: ${ft} ft (${Math.round(m)} m)`;
+    };
+    map.on('mousemove', (e) => {
+      const t = this.world?.terrain;
+      if (!t || !this.elevEl) return;
+      const { lat, lng } = e.latlng;
+      this.elevEl.style.display = 'block';
+      const cached = t.demAtLatLon(lat, lng);
+      if (cached != null) {
+        this.elevEl.textContent = fmtElev(Math.max(0, cached));
+        return;
+      }
+      this.elevEl.textContent = 'YER: yükleniyor…';
+      clearTimeout(this._elevTimer);
+      const seq = ++this._elevSeq;
+      this._elevTimer = setTimeout(async () => {
+        const m = await t.elevationAtLatLon(lat, lng);
+        if (seq === this._elevSeq && this.elevEl) this.elevEl.textContent = fmtElev(m);
+      }, 90);
+    });
+    map.on('mouseout', () => {
+      clearTimeout(this._elevTimer);
+      this._elevSeq++;
+      if (this.elevEl) this.elevEl.style.display = 'none';
+    });
     tips(box, {
       '[data-a="follow"]': 'Takip|Haritayı uçağa kilitler. Haritayı sürüklersen takip kapanır; bu düğmeyle geri aç.',
       '[data-a="in"]': 'Yakınlaş|Haritayı yakınlaştırır (fare tekerleği de çalışır).',
@@ -101,20 +136,26 @@ export class MiniMap {
   setDraftRoute(points) {
     this.draftLayer.clearLayers();
     if (!points || points.length < 2) return;
+    const fmtC = (a) => !a ? '' : a.type === 'AOA' ? ` A${a.ft}` : a.type === 'AOB' ? ` B${a.ft}` : ` ${a.ft}ft`;
     L.polyline(points.map(p => [p.lat, p.lon]), { color: '#ffb020', weight: 2, opacity: 0.9, dashArray: '6 6', interactive: false }).addTo(this.draftLayer);
     for (const p of points) {
-      if (p.kind === 'wpt') L.circleMarker([p.lat, p.lon], { radius: 4, color: '#ffb020', weight: 1.5, fillColor: '#0b1220', fillOpacity: 1, interactive: false }).addTo(this.draftLayer);
+      if (p.kind === 'wpt') {
+        L.circleMarker([p.lat, p.lon], { radius: 4, color: '#ffb020', weight: 1.5, fillColor: '#0b1220', fillOpacity: 1, interactive: false })
+          .bindTooltip(`${p.id}${fmtC(p.alt)}`, { permanent: true, direction: 'top', className: 'mm-tick' }).addTo(this.draftLayer);
+      }
     }
   }
 
   setActiveRoute(activeRoute) {
     this.routeLayer.clearLayers();
     if (!activeRoute || !activeRoute.points.length) return;
+    const fmtC = (a) => !a ? '' : a.type === 'AOA' ? ` A${a.ft}` : a.type === 'AOB' ? ` B${a.ft}` : ` ${a.ft}ft`;
     const pts = activeRoute.points;
     L.polyline(pts.map(p => [p.lat, p.lon]), { color: '#ff4fd8', weight: 2.5, opacity: 0.95, interactive: false }).addTo(this.routeLayer);
     for (const p of pts) {
+      const lbl = p.kind === 'wpt' ? `${p.id}${fmtC(p.alt)}` : p.id;
       L.circleMarker([p.lat, p.lon], { radius: p.kind === 'faf' ? 4.5 : 4, color: '#ff4fd8', weight: 1.5, fillColor: '#ff4fd8', fillOpacity: 0.9, interactive: false })
-        .bindTooltip(p.id, { permanent: p.kind !== 'orig', direction: 'top', className: 'mm-tick' }).addTo(this.routeLayer);
+        .bindTooltip(lbl, { permanent: p.kind !== 'orig', direction: 'top', className: 'mm-tick' }).addTo(this.routeLayer);
     }
     const todM = (10 + todDistanceNm(activeRoute.route.crzFt, activeRoute.route.fafFt)) * NM;
     const todLocal = activeRoute.pointAtDistFromDest(todM);

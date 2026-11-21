@@ -195,3 +195,29 @@ test('VNAV descent honours an AOA constraint as a floor', () => {
   assert.equal(v.altFt, 11000);
   assert.ok(v.pathAltFt >= 11000);
 });
+
+test('ActiveRoute excludes faf/thr from constraints and exposes activeConstraint', () => {
+  const r = new ActiveRoute({
+    points: [
+      { id: 'ORIG', x: 0, z: 0, kind: 'orig', alt: null },
+      { id: 'WP1', x: 0, z: -20000, kind: 'wpt', alt: { type: 'AT', ft: 7000 } },
+      { id: 'FAF', x: 0, z: -40000, kind: 'faf', alt: { type: 'AT', ft: 3200 } },
+      { id: 'THR', x: 0, z: -58000, kind: 'thr', alt: { type: 'AT', ft: 300 } },
+    ],
+    crzFt: 12000, clbKt: 250, desKt: 250, crzMach: 0.65, fafFt: 3200,
+  });
+  r.start({ x: 0, z: -1000 });
+  const s = r.update({ x: 0, z: -2000 }, 120);
+  assert.deepEqual(s.activeConstraint, { type: 'AT', ft: 7000 });
+  assert.deepEqual(s.constraints, [{ type: 'AT', ft: 7000 }]);
+});
+
+test('VNAV honours active waypoint AT/AOB/AOA constraints in CLB, CRZ and DES', () => {
+  let v = vnavTarget({ ...cfg, crzFt: 12000, activeConstraint: { type: 'AT', ft: 5000 }, constraints: [{ type: 'AT', ft: 5000 }], phase: 'CRZ', altFt: 12000, distToDestNm: 80, onFinal: false });
+  assert.equal(v.altFt, 5000);
+  v = vnavTarget({ ...cfg, crzFt: 12000, activeConstraint: { type: 'AT', ft: 8000 }, constraints: [{ type: 'AT', ft: 8000 }], phase: 'CLB', altFt: 4000, distToDestNm: 80, onFinal: false });
+  assert.equal(v.altFt, 8000);
+  v = vnavTarget({ ...cfg, crzFt: 12000, activeConstraint: { type: 'AT', ft: 4000 }, constraints: [{ type: 'AT', ft: 4000 }], phase: 'DES', altFt: 9000, distToDestNm: 35, onFinal: false });
+  assert.equal(v.altFt, 4000);
+  assert.equal(v.pathAltFt, 4000);
+});

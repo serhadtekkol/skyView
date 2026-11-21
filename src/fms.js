@@ -173,10 +173,22 @@ export class FMS {
 
   addPointFromMap(lat, lon) {
     if (!this.visible) return false;
-    this.draft.wpts.push({ id: `WP${this.draft.wpts.length + 1}`, lat, lon, alt: null });
+    const w = { id: `WP${this.draft.wpts.length + 1}`, lat, lon, alt: null, gndM: null };
+    this.draft.wpts.push(w);
     this.tab = 'legs';
     this.markMod();
+    this.fetchWaypointElev(w);
     return true;
+  }
+
+  async fetchWaypointElev(w) {
+    const t = this.world?.terrain;
+    if (!t || !w) return;
+    const m = await t.elevationAtLatLon(w.lat, w.lon);
+    if (m != null && w.gndM !== m) {
+      w.gndM = m;
+      if (this.visible && this.tab === 'legs') this.render();
+    }
   }
 
   syncPreview() {
@@ -310,10 +322,15 @@ export class FMS {
         if (p.kind === 'wpt') {
           wptIdx++;
           const wi = wptIdx;
+          const dw = this.draft.wpts[wi];
+          if (dw.gndM == null) this.fetchWaypointElev(dw);
+          const gndFt = dw.gndM != null ? Math.round(dw.gndM * 3.28084) : null;
+          const gndTxt = gndFt == null ? 'YER: …' : (dw.gndM <= 1 ? 'DENİZ · 0 ft' : `YER: ${gndFt} ft (${dw.gndM} m)`);
+          const lowWarn = gndFt != null && dw.alt && dw.alt.ft < gndFt + 500;
           return `
             <div class="fms-leg" data-wi="${wi}">
-              <div><div class="fms-leg-id">${esc(p.id)}</div><div class="fms-leg-sub">${sub} · ${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}</div></div>
-              <input class="alt" data-alt="${wi}" placeholder="İrtifa (ops.)" title="Boş bırakılabilir. 9000 = tam 9000 ft, A9000 = en az 9000 ft, B12000 = en fazla 12000 ft" value="${esc(fmtAlt(this.draft.wpts[wi].alt))}">
+              <div><div class="fms-leg-id">${esc(p.id)}</div><div class="fms-leg-sub">${sub} · <span style="color:${lowWarn ? '#ffb020' : '#9fe6ff'}">${gndTxt}</span></div></div>
+              <input class="alt${lowWarn ? ' bad' : ''}" data-alt="${wi}" placeholder="${gndFt != null ? `>${gndFt + 500} ft` : 'İrtifa (ops.)'}" title="${lowWarn ? `UYARI: Yer yüksekliği ${gndFt} ft! En az ${gndFt + 500} ft önerilir.` : 'Boş bırakılabilir. 9000 = tam 9000 ft, A9000 = en az 9000 ft, B12000 = en fazla 12000 ft'}" value="${esc(fmtAlt(dw.alt))}">
               <div class="fms-row">
                 <button class="fms-btn" data-mv="-1" ${wi === 0 ? 'disabled' : ''}>↑</button>
                 <button class="fms-btn" data-mv="1" ${wi === this.draft.wpts.length - 1 ? 'disabled' : ''}>↓</button>
@@ -350,10 +367,19 @@ export class FMS {
         const altIn = row.querySelector('input.alt');
         altIn.addEventListener('keydown', e => e.stopPropagation());
         altIn.addEventListener('keyup', e => e.stopPropagation());
+        altIn.addEventListener('input', () => {
+          const parsed = parseAltConstraint(altIn.value);
+          if (parsed === undefined) { altIn.classList.add('bad'); return; }
+          const gndFt = this.draft.wpts[wi].gndM != null ? Math.round(this.draft.wpts[wi].gndM * 3.28084) : null;
+          altIn.classList.toggle('bad', !!(gndFt != null && parsed && parsed.ft < gndFt + 500));
+          this.draft.wpts[wi].alt = parsed;
+          this.mod = true;
+          this.el.querySelector('.fms-mod').classList.add('on');
+          this.syncPreview();
+        });
         altIn.addEventListener('change', () => {
           const parsed = parseAltConstraint(altIn.value);
           if (parsed === undefined) { altIn.classList.add('bad'); return; }
-          altIn.classList.remove('bad');
           this.draft.wpts[wi].alt = parsed;
           this.markMod();
         });

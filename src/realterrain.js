@@ -149,6 +149,17 @@ export class RealTerrain {
     return null;
   }
 
+  /** Ground elevation in metres (>= 0) at any lat/lon; uses cached DEM or fetches a zoom-10 tile on demand. */
+  async elevationAtLatLon(lat, lon, z = 10) {
+    const cached = this.demAtLatLon(lat, lon);
+    if (cached != null) return Math.max(0, Math.round(cached));
+    const tx = lonToTX(lon, z), ty = latToTY(lat, z);
+    const ix = Math.floor(tx), iy = Math.floor(ty);
+    const data = await this.loadElev(z, ix, iy);
+    if (!data) return null;
+    return Math.max(0, Math.round(RealTerrain.sample(data, tx - ix, ty - iy)));
+  }
+
   flatten(x, z, h) {
     for (const f of this.flat) {
       const rx = x - f.cx, rz = z - f.cz;

@@ -260,7 +260,8 @@ export class ActiveRoute {
       const corr = clamp(-xtkM * 0.008 - vlat * 0.55, -35, 35);
       desiredTrack = (l.crs + corr + 360) % 360;
     }
-    const constraints = this.points.slice(i + 1).map(p => p.alt).filter(Boolean);
+    const constraints = this.points.slice(i + 1).filter(p => p.kind === 'wpt' && p.alt).map(p => p.alt);
+    const activeConstraint = b.kind === 'wpt' ? (b.alt || null) : null;
 
     return {
       legIndex: i,
@@ -274,17 +275,19 @@ export class ActiveRoute {
       offRoute,
       sequenced,
       constraints,
+      activeConstraint,
     };
   }
 }
 
 // ---------------------------------------------------------------- VNAV profile
-export function vnavTarget({ crzFt, clbKt, desKt, crzMach, fafFt, constraints = [], phase = 'CLB', altFt, distToDestNm, onFinal, speedScale = 1 }) {
+export function vnavTarget({ crzFt, clbKt, desKt, crzMach, fafFt, constraints = [], activeConstraint = null, phase = 'CLB', altFt, distToDestNm, onFinal, speedScale = 1 }) {
   if (onFinal) {
     return { phase: 'APP', altFt: fafFt, pathAltFt: fafFt, spdKt: Math.round(180 * speedScale) };
   }
   const distToFafNm = Math.max(0, distToDestNm - 10);
   const todDistFromDest = 10 + todDistanceNm(crzFt, fafFt);
+  const nextC = activeConstraint || constraints[0] || null;
 
   if (phase === 'CLB') {
     if (altFt >= crzFt - 200) phase = 'CRZ';
@@ -295,21 +298,49 @@ export function vnavTarget({ crzFt, clbKt, desKt, crzMach, fafFt, constraints = 
   }
 
   if (phase === 'CLB') {
-    let cap = crzFt;
-    for (const c of constraints) if ((c.type === 'AT' || c.type === 'AOB') && c.ft < cap) cap = c.ft;
+    let tgt = crzFt;
+    if (activeConstraint) {
+      if (activeConstraint.type === 'AT') tgt = activeConstraint.ft;
+      else if (activeConstraint.type === 'AOB') tgt = Math.min(tgt, activeConstraint.ft);
+      else if (activeConstraint.type === 'AOA') tgt = Math.max(tgt, activeConstraint.ft);
+    } else {
+      for (const c of constraints) if ((c.type === 'AT' || c.type === 'AOB') && c.ft < tgt) tgt = c.ft;
+    }
     const spd = altFt < 10000 ? Math.min(clbKt, 250) : clbKt;
-    return { phase: 'CLB', altFt: cap, pathAltFt: cap, spdKt: spd };
+    return { phase: 'CLB', altFt: tgt, pathAltFt: tgt, spdKt: spd };
   }
 
   if (phase === 'CRZ') {
-    return { phase: 'CRZ', altFt: crzFt, pathAltFt: crzFt, spdKt: Math.round(machToIas(crzMach, altFt)) };
+    let tgt = crzFt;
+    if (nextC) {
+      if (nextC.type === 'AT') tgt = nextC.ft;
+      else if (nextC.type === 'AOB') tgt = Math.min(tgt, nextC.ft);
+      else if (nextC.type === 'AOA') tgt = Math.max(tgt, nextC.ft);
+    }
+    const crzIas = Math.round(machToIas(crzMach, altFt));
+    const spd = altFt < 10000 ? Math.min(crzIas, 250) : crzIas;
+    return { phase: 'CRZ', altFt: tgt, pathAltFt: tgt, spdKt: spd };
   }
 
   // DES (never reverts to CLB)
   let pathAltFt = Math.min(crzFt, fafFt + distToFafNm * NM * TAN3 * M2FT);
   let floor = fafFt;
   for (const c of constraints) if ((c.type === 'AT' || c.type === 'AOA') && c.ft > floor) floor = c.ft;
-  pathAltFt = Math.max(pathAltFt, floor);
+  let tgtAlt = floor;
+  if (activeConstraint) {
+    if (activeConstraint.type === 'AT') {
+      tgtAlt = activeConstraint.ft;
+      pathAltFt = activeConstraint.ft;
+    } else if (activeConstraint.type === 'AOB' && activeConstraint.ft < pathAltFt) {
+      pathAltFt = activeConstraint.ft;
+      tgtAlt = Math.min(tgtAlt, activeConstraint.ft);
+    } else if (activeConstraint.type === 'AOA') {
+      tgtAlt = Math.max(tgtAlt, activeConstraint.ft);
+      pathAltFt = Math.max(pathAltFt, activeConstraint.ft);
+    }
+  } else {
+    pathAltFt = Math.max(pathAltFt, floor);
+  }
   const spd = altFt < 10000 ? Math.min(desKt, 250) : desKt;
-  return { phase: 'DES', altFt: floor, pathAltFt, spdKt: spd };
+  return { phase: 'DES', altFt: tgtAlt, pathAltFt, spdKt: spd };
 }
