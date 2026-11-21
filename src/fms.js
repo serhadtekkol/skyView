@@ -171,9 +171,9 @@ export class FMS {
     this.onToggle?.(this.visible);
   }
 
-  addPointFromMap(lat, lon) {
+  addPointFromMap(lat, lon, id = null) {
     if (!this.visible) return false;
-    const w = { id: `WP${this.draft.wpts.length + 1}`, lat, lon, alt: null, gndM: null };
+    const w = { id: id || `WP${this.draft.wpts.length + 1}`, lat, lon, alt: null, gndM: null };
     this.draft.wpts.push(w);
     this.tab = 'legs';
     this.markMod();

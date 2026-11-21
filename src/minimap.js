@@ -1,6 +1,7 @@
 import * as L from '/node_modules/leaflet/dist/leaflet-src.esm.js';
 import { tips } from './tooltip.js';
 import { todDistanceNm, NM } from './flightplan.js';
+import { LANDMARKS } from './landmarks.js';
 
 // In-flight moving map (top-right): satellite + labels, aircraft symbol rotated to heading,
 // flown track, runways.  V toggles, buttons: follow / enlarge / zoom.
@@ -44,7 +45,7 @@ export class MiniMap {
     const box = this.box = document.createElement('div');
     box.id = 'minimap';
     box.innerHTML = `<div class="mm-map"></div>
-      <div class="mm-bar"><span class="mm-grip">⋮⋮</span><button data-a="follow" class="on" title="Uçağı takip et">◎</button><button data-a="in" title="Yakınlaş">+</button>
+      <div class="mm-bar"><span class="mm-grip">⋮⋮</span><button data-a="poi" class="on" title="Önemli yerleri göster / gizle">★</button><button data-a="follow" class="on" title="Uçağı takip et">◎</button><button data-a="in" title="Yakınlaş">+</button>
       <button data-a="out" title="Uzaklaş">−</button><button data-a="big" title="Büyüt / küçült">⤢</button></div>
       <div class="mm-elev"></div>
       <div class="mm-info"></div>`;
@@ -77,11 +78,24 @@ export class MiniMap {
     this.onMapClick = null;
     this.routeLayer = L.layerGroup().addTo(map);
     this.draftLayer = L.layerGroup().addTo(map);
+    this.poiLayer = L.layerGroup().addTo(map);
+    this.showPoi = true;
+    for (const lm of LANDMARKS) {
+      const mk = L.circleMarker([lm.lat, lm.lon], { radius: 4.5, color: '#0b1220', weight: 1.5, fillColor: '#ffbe3b', fillOpacity: 0.96 });
+      mk.bindTooltip(`★ ${lm.name} (${lm.city})`, { direction: 'top', className: 'mm-tick' });
+      mk.on('click', (e) => { L.DomEvent.stopPropagation(e); this.onMapClick?.(lm.lat, lm.lon, lm.id); });
+      mk.addTo(this.poiLayer);
+    }
     map.on('dragstart', () => this.setFollow(false));
     map.on('click', (e) => { this.onMapClick?.(e.latlng.lat, e.latlng.lng); });
     box.querySelector('.mm-bar').addEventListener('click', (e) => {
       const a = e.target.closest('button')?.dataset.a;
-      if (a === 'follow') this.setFollow(!this.follow);
+      if (a === 'poi') {
+        this.showPoi = !this.showPoi;
+        if (this.showPoi) this.poiLayer.addTo(map); else this.poiLayer.remove();
+        box.querySelector('[data-a="poi"]').classList.toggle('on', this.showPoi);
+      }
+      else if (a === 'follow') this.setFollow(!this.follow);
       else if (a === 'in') map.zoomIn();
       else if (a === 'out') map.zoomOut();
       else if (a === 'big') { box.classList.toggle('big'); setTimeout(() => map.invalidateSize(), 220); }

@@ -127,7 +127,7 @@ async function startWorld(site, mode) {
   if (world.frame) {
     fms = new FMS({ airports, world, fm, ap, minimap, hud, onToggle: v => mcp?.setFmsOpen(v) });
     layout.dom('fms', fms.el, fms.el.querySelector('.fms-grip'));
-    minimap.onMapClick = (lat, lon) => { if (fms?.addPointFromMap(lat, lon)) hud.message('WPT EKLENDİ', 'cyan', 2); };
+    minimap.onMapClick = (lat, lon, id) => { if (fms?.addPointFromMap(lat, lon, id)) hud.message(`WPT EKLENDİ${id ? ': ' + id : ''}`, 'cyan', 2); };
   }
   if (world.frame) { firs = await firsP; if (firs) { minimap?.setFirs(firs); hud.attribution += ' · FIR: VATSpy (CC BY-SA 4.0)'; } }
   startMode = mode;

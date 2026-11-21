@@ -3,6 +3,7 @@ import { FLEET, fleetById, speedScale } from './fleet.js';
 import { AircraftPreview } from './preview.js';
 import { tips } from './tooltip.js';
 import { WEATHER, WEATHER_IDS, hourLabel } from './environment.js';
+import { LANDMARKS } from './landmarks.js';
 
 // Start screen: satellite map with airports, search, runway / mode selection, free-flight point.
 
@@ -20,6 +21,7 @@ export class Menu {
     this.root = root; this.airports = airports; this.onStart = onStart;
     this.sel = null; this.rwIndex = 0; this.end = 'le'; this.free = null; this.ready = false;
     airports.forEach(a => { a._s = norm(`${a.icao} ${a.iata} ${a.name} ${a.city}`); });
+    const landmarks = LANDMARKS.map(lm => ({ ...lm, _s: norm(`${lm.id} ${lm.name} ${lm.city} ${lm.cc}`) }));
     this.el = (id) => root.querySelector('#' + id);
 
     const m = this.map = L.map(this.el('map'), { worldCopyJump: true, zoomControl: true, attributionControl: true, preferCanvas: true })
@@ -33,25 +35,50 @@ export class Menu {
       mk.on('click', (e) => { L.DomEvent.stopPropagation(e); this.select(a); });
       mk.addTo(m);
     }
+    for (const lm of landmarks) {
+      const mk = L.circleMarker([lm.lat, lm.lon], { renderer, radius: 5.5, color: '#0b1220', weight: 1.5, fillColor: '#ffbe3b', fillOpacity: 0.98 });
+      mk.bindTooltip(`★ ${esc(lm.name)} · ${esc(lm.city)}`, { direction: 'top' });
+      mk.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        this.pickFree({ lat: lm.lat, lng: lm.lon }, lm.name);
+        m.setView([lm.lat, lm.lon], Math.max(m.getZoom(), 12));
+      });
+      mk.addTo(m);
+    }
     this.rwLayer = L.layerGroup().addTo(m);
     this.freeMarker = null;
     m.on('click', (e) => this.pickFree(e.latlng));
 
-    // search
+    // search (airports + landmarks)
     const input = this.el('search'), list = this.el('results');
     const run = () => {
       const q = norm(input.value.trim());
       if (!q) { list.innerHTML = ''; return; }
-      const hits = this.airports.filter(a => a._s.includes(q))
+      const lmHits = landmarks.filter(lm => lm._s.includes(q)).slice(0, 4).map(lm => ({ kind: 'lm', item: lm }));
+      const aptHits = this.airports.filter(a => a._s.includes(q))
         .sort((a, b) => (norm(b.icao) === q || norm(b.iata) === q) - (norm(a.icao) === q || norm(a.iata) === q) || b.big - a.big)
-        .slice(0, 8);
-      list.innerHTML = hits.map((a, i) => `<li data-i="${this.airports.indexOf(a)}"><b>${a.icao}</b>${a.iata ? ' ' + a.iata : ''} · ${esc(a.name)} <span>${esc(a.city)}, ${a.cc}</span></li>`).join('');
+        .slice(0, 8 - lmHits.length).map(a => ({ kind: 'apt', item: a }));
+      const hits = [...lmHits, ...aptHits];
+      list.innerHTML = hits.map((h, i) => h.kind === 'lm'
+        ? `<li data-hi="${i}"><b style="color:#ffbe3b">★</b> <b>${esc(h.item.name)}</b> <span>${esc(h.item.city)}, ${h.item.cc}</span></li>`
+        : `<li data-hi="${i}"><b>${h.item.icao}</b>${h.item.iata ? ' ' + h.item.iata : ''} · ${esc(h.item.name)} <span>${esc(h.item.city)}, ${h.item.cc}</span></li>`).join('');
       this.hits = hits;
     };
+    const pickHit = (h) => {
+      if (!h) return;
+      if (h.kind === 'lm') {
+        const lm = h.item;
+        this.pickFree({ lat: lm.lat, lng: lm.lon }, lm.name);
+        m.setView([lm.lat, lm.lon], 13);
+      } else {
+        this.select(h.item);
+      }
+      list.innerHTML = ''; input.value = '';
+    };
     input.addEventListener('input', run);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && this.hits?.[0]) { this.select(this.hits[0]); list.innerHTML = ''; } e.stopPropagation(); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && this.hits?.[0]) pickHit(this.hits[0]); e.stopPropagation(); });
     input.addEventListener('keyup', (e) => e.stopPropagation());
-    list.addEventListener('click', (e) => { const li = e.target.closest('li'); if (li) { this.select(this.airports[+li.dataset.i]); list.innerHTML = ''; input.value = ''; } });
+    list.addEventListener('click', (e) => { const li = e.target.closest('li'); if (li) pickHit(this.hits?.[+li.dataset.hi]); });
 
     this.el('btnTO').onclick = () => this.go('to');
     this.el('btnAPP').onclick = () => this.go('app');
@@ -159,12 +186,14 @@ export class Menu {
     });
   }
 
-  pickFree(ll) {
+  pickFree(ll, label = null) {
     this.free = ll;
     if (this.freeMarker) this.freeMarker.remove();
     this.freeMarker = L.circleMarker(ll, { radius: 7, color: '#000', weight: 2, fillColor: '#ff4fd8', fillOpacity: 1 })
-      .bindTooltip('Serbest uçuş noktası', { permanent: true, direction: 'right' }).addTo(this.map);
-    this.el('freeInfo').textContent = `${ll.lat.toFixed(4)}, ${ll.lng.toFixed(4)} · 4000 ft üzerinde, 250 kt`;
+      .bindTooltip(label ? `★ ${esc(label)}` : 'Serbest uçuş noktası', { permanent: true, direction: 'right' }).addTo(this.map);
+    this.el('freeInfo').textContent = label
+      ? `★ ${label} · 4000 ft, 250 kt`
+      : `${ll.lat.toFixed(4)}, ${ll.lng.toFixed(4)} · 4000 ft üzerinde, 250 kt`;
     this.setReady(this.ready);
   }
 
@@ -188,7 +217,7 @@ export const MENU_HTML = `
         <div><h1>SkyView</h1><div class="sub">Flight Deck Dispatch</div></div>
       </div>
       <div class="searchbox">
-        <input id="search" placeholder="Havalimanı ara: LTFM, IST, Sabiha, Antalya, Heathrow…" autocomplete="off" />
+        <input id="search" placeholder="Havalimanı veya önemli yer ara: LTFM, Anıtkabir, Eyfel, Boğaz…" autocomplete="off" />
         <ul id="results"></ul>
       </div>
       <div class="top-actions">

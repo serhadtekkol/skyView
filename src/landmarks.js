@@ -1,0 +1,66 @@
+// Curated iconic Turkish & world landmarks (POIs) for the dispatch map, in-flight minimap, and FMS search.
+// Fields: id (short FMS code), name, city, cc, lat, lon, cat ('bridge'|'monument'|'tower'|'nature'|'historic')
+
+export const LANDMARKS = [
+  // ---- İstanbul
+  { id: 'BOGAZ1', name: '15 Temmuz Şehitler Köprüsü', city: 'İstanbul', cc: 'TR', lat: 41.0454, lon: 29.0342, cat: 'bridge' },
+  { id: 'FSMKPR', name: 'Fatih Sultan Mehmet Köprüsü', city: 'İstanbul', cc: 'TR', lat: 41.0912, lon: 29.0616, cat: 'bridge' },
+  { id: 'YSSKPR', name: 'Yavuz Sultan Selim Köprüsü', city: 'İstanbul', cc: 'TR', lat: 41.2028, lon: 29.1114, cat: 'bridge' },
+  { id: 'AYASOF', name: 'Ayasofya & Sultanahmet', city: 'İstanbul', cc: 'TR', lat: 41.0086, lon: 28.9802, cat: 'historic' },
+  { id: 'GALATA', name: 'Galata Kulesi', city: 'İstanbul', cc: 'TR', lat: 41.0256, lon: 28.9742, cat: 'tower' },
+  { id: 'KIZKUL', name: 'Kız Kulesi', city: 'İstanbul', cc: 'TR', lat: 41.0211, lon: 29.0041, cat: 'historic' },
+  { id: 'CAMLIC', name: 'Çamlıca Kulesi', city: 'İstanbul', cc: 'TR', lat: 41.0161, lon: 29.0655, cat: 'tower' },
+  { id: 'OSMGZ',  name: 'Osmangazi Köprüsü', city: 'Kocaeli / Yalova', cc: 'TR', lat: 40.7544, lon: 29.5153, cat: 'bridge' },
+
+  // ---- Ankara & Türkiye
+  { id: 'ANITKB', name: 'Anıtkabir', city: 'Ankara', cc: 'TR', lat: 39.9251, lon: 32.8369, cat: 'monument' },
+  { id: 'ATAKUL', name: 'Atakule', city: 'Ankara', cc: 'TR', lat: 39.8861, lon: 32.8560, cat: 'tower' },
+  { id: 'CNK1915', name: '1915 Çanakkale Köprüsü', city: 'Çanakkale', cc: 'TR', lat: 40.3401, lon: 26.6368, cat: 'bridge' },
+  { id: 'ABIDE',  name: 'Çanakkale Şehitler Abidesi', city: 'Çanakkale', cc: 'TR', lat: 40.0500, lon: 26.2182, cat: 'monument' },
+  { id: 'ULUDAG', name: 'Uludağ Zirve', city: 'Bursa', cc: 'TR', lat: 40.0700, lon: 29.2217, cat: 'nature' },
+  { id: 'EFES',   name: 'Efes Antik Kenti', city: 'İzmir', cc: 'TR', lat: 37.9411, lon: 27.3419, cat: 'historic' },
+  { id: 'PAMUKK', name: 'Pamukkale Travertenleri', city: 'Denizli', cc: 'TR', lat: 37.9244, lon: 29.1230, cat: 'nature' },
+  { id: 'OLUDNZ', name: 'Ölüdeniz', city: 'Muğla', cc: 'TR', lat: 36.5494, lon: 29.1149, cat: 'nature' },
+  { id: 'KAPADK', name: 'Kapadokya (Göreme)', city: 'Nevşehir', cc: 'TR', lat: 38.6431, lon: 34.8289, cat: 'nature' },
+  { id: 'ERCIYS', name: 'Erciyes Dağı', city: 'Kayseri', cc: 'TR', lat: 38.5317, lon: 35.4469, cat: 'nature' },
+  { id: 'SUMELA', name: 'Sümela Manastırı', city: 'Trabzon', cc: 'TR', lat: 40.6904, lon: 39.6584, cat: 'historic' },
+  { id: 'NEMRUT', name: 'Nemrut Dağı', city: 'Adıyaman', cc: 'TR', lat: 37.9808, lon: 38.7408, cat: 'historic' },
+  { id: 'GOBEK',  name: 'Göbeklitepe', city: 'Şanlıurfa', cc: 'TR', lat: 37.2232, lon: 38.9224, cat: 'historic' },
+  { id: 'AGRIDG', name: 'Ağrı Dağı', city: 'Ağrı', cc: 'TR', lat: 39.7019, lon: 44.2979, cat: 'nature' },
+  { id: 'AKDAMR', name: 'Akdamar Adası (Van Gölü)', city: 'Van', cc: 'TR', lat: 38.3408, lon: 43.0369, cat: 'historic' },
+
+  // ---- Avrupa
+  { id: 'EYFEL',  name: 'Eyfel Kulesi', city: 'Paris', cc: 'FR', lat: 48.8584, lon: 2.2945, cat: 'tower' },
+  { id: 'LOUVRE', name: 'Louvre Müzesi', city: 'Paris', cc: 'FR', lat: 48.8606, lon: 2.3376, cat: 'historic' },
+  { id: 'BIGBEN', name: 'Big Ben & Parlamento', city: 'Londra', cc: 'GB', lat: 51.5007, lon: -0.1246, cat: 'tower' },
+  { id: 'TWRBRG', name: 'Tower Bridge', city: 'Londra', cc: 'GB', lat: 51.5055, lon: -0.0754, cat: 'bridge' },
+  { id: 'KOLEZY', name: 'Kolezyum', city: 'Roma', cc: 'IT', lat: 41.8902, lon: 12.4922, cat: 'historic' },
+  { id: 'PISA',   name: 'Pisa Kulesi', city: 'Pisa', cc: 'IT', lat: 43.7230, lon: 10.3966, cat: 'tower' },
+  { id: 'VENEDK', name: 'San Marco Meydanı', city: 'Venedik', cc: 'IT', lat: 45.4342, lon: 12.3388, cat: 'historic' },
+  { id: 'SAGRAD', name: 'Sagrada Família', city: 'Barselona', cc: 'ES', lat: 41.4036, lon: 2.1744, cat: 'monument' },
+  { id: 'AKROPL', name: 'Akropolis', city: 'Atina', cc: 'GR', lat: 37.9715, lon: 23.7257, cat: 'historic' },
+  { id: 'BRANDB', name: 'Brandenburg Kapısı', city: 'Berlin', cc: 'DE', lat: 52.5163, lon: 13.3777, cat: 'monument' },
+  { id: 'NEUSCH', name: 'Neuschwanstein Şatosu', city: 'Bavyera', cc: 'DE', lat: 47.5576, lon: 10.7498, cat: 'historic' },
+  { id: 'MATTER', name: 'Matterhorn', city: 'Zermatt', cc: 'CH', lat: 45.9763, lon: 7.6586, cat: 'nature' },
+  { id: 'MBLANC', name: 'Mont Blanc', city: 'Alpler', cc: 'FR', lat: 45.8326, lon: 6.8652, cat: 'nature' },
+  { id: 'ORESND', name: 'Öresund Köprüsü', city: 'Kopenhag / Malmö', cc: 'DK', lat: 55.5707, lon: 12.8286, cat: 'bridge' },
+
+  // ---- Dünya
+  { id: 'LIBRTY', name: 'Özgürlük Heykeli', city: 'New York', cc: 'US', lat: 40.6892, lon: -74.0445, cat: 'monument' },
+  { id: 'GOLDGT', name: 'Golden Gate Köprüsü', city: 'San Francisco', cc: 'US', lat: 37.8199, lon: -122.4783, cat: 'bridge' },
+  { id: 'GCANYN', name: 'Büyük Kanyon (Grand Canyon)', city: 'Arizona', cc: 'US', lat: 36.0544, lon: -112.1401, cat: 'nature' },
+  { id: 'NIAGRA', name: 'Niagara Şelalesi', city: 'Ontario / NY', cc: 'CA', lat: 43.0828, lon: -79.0742, cat: 'nature' },
+  { id: 'CRISTO', name: 'Kurtarıcı İsa Heykeli', city: 'Rio de Janeiro', cc: 'BR', lat: -22.9519, lon: -43.2105, cat: 'monument' },
+  { id: 'MACHUP', name: 'Machu Picchu', city: 'Cusco', cc: 'PE', lat: -13.1631, lon: -72.5450, cat: 'historic' },
+  { id: 'GIZE',   name: 'Gize Piramitleri', city: 'Kahire', cc: 'EG', lat: 29.9792, lon: 31.1342, cat: 'historic' },
+  { id: 'BURJKH', name: 'Burj Khalifa', city: 'Dubai', cc: 'AE', lat: 25.1972, lon: 55.2744, cat: 'tower' },
+  { id: 'PALMJM', name: 'Palm Jumeirah', city: 'Dubai', cc: 'AE', lat: 25.1124, lon: 55.1390, cat: 'monument' },
+  { id: 'PETRA',  name: 'Petra Antik Kenti', city: 'Ma\'an', cc: 'JO', lat: 30.3285, lon: 35.4444, cat: 'historic' },
+  { id: 'TAJMAH', name: 'Tac Mahal', city: 'Agra', cc: 'IN', lat: 27.1751, lon: 78.0421, cat: 'monument' },
+  { id: 'FUJI',   name: 'Fuji Dağı', city: 'Honşu', cc: 'JP', lat: 35.3606, lon: 138.7274, cat: 'nature' },
+  { id: 'TOKYOT', name: 'Tokyo Skytree', city: 'Tokyo', cc: 'JP', lat: 35.7101, lon: 139.8107, cat: 'tower' },
+  { id: 'MARINA', name: 'Marina Bay Sands', city: 'Singapur', cc: 'SG', lat: 1.2834, lon: 103.8607, cat: 'tower' },
+  { id: 'OPERA',  name: 'Sidney Opera Binası', city: 'Sidney', cc: 'AU', lat: -33.8568, lon: 151.2153, cat: 'monument' },
+  { id: 'CINSED', name: 'Çin Seddi (Badaling)', city: 'Pekin', cc: 'CN', lat: 40.3584, lon: 116.0138, cat: 'historic' },
+  { id: 'EVERST', name: 'Everest Dağı', city: 'Himalayalar', cc: 'NP', lat: 27.9881, lon: 86.9250, cat: 'nature' },
+];
