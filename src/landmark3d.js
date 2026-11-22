@@ -426,11 +426,11 @@ const BUILDERS = {
   OPERA:  () => ({ ...buildGenericIcon('OPERA'), heading: 35 }),
 };
 
-// Exact real-world GPS coordinates of the two main towers for each bridge (locks 3D span & angle directly onto satellite imagery)
+// Exact real-world GPS coordinates of the two main towers for each bridge (photogrammetry-locked to Esri satellite tiles)
 const BRIDGE_TOWERS = {
-  BOGAZ1:  [[41.04640, 29.02750], [41.04410, 29.04160]],
-  FSMKPR:  [[41.09215, 29.05480], [41.09025, 29.06770]],
-  YSSKPR:  [[41.20390, 29.10330], [41.20230, 29.12010]],
+  BOGAZ1:  [[41.04950, 29.03028], [41.04197, 29.03828]],
+  FSMKPR:  [[41.09115, 29.05528], [41.09180, 29.06825]],
+  YSSKPR:  [[41.20642, 29.10394], [41.19978, 29.11851]],
   OSMGZ:   [[40.76145, 29.51535], [40.74750, 29.51535]],
   CNK1915: [[40.34585, 26.62745], [40.33408, 26.64588]],
   GOLDGT:  [[37.81414, -122.47797], [37.82563, -122.47908]],
