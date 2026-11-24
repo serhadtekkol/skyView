@@ -11,6 +11,7 @@ import { CabinAudio } from './cabin.js';
 import { VolumePanel } from './volume.js';
 import { StatsPanel } from './stats.js';
 import { netStats } from './netstats.js';
+import { telemetry } from './telemetry.js';
 import { FMS } from './fms.js';
 import { AirTraffic } from './traffic.js';
 import { ATCPanel } from './atc.js';
@@ -55,6 +56,10 @@ const volPanel = new VolumePanel(sound);
 layout.dom('volume', volPanel.el, volPanel.el.querySelector('.vol-grip'));
 const statsPanel = new StatsPanel();
 layout.dom('stats', statsPanel.el, statsPanel.el.querySelector('.st-grip'));
+telemetry.getMetrics = () => ({
+  flightSec: Math.round(statsPanel.flightSec || 0),
+  distanceNm: Math.round(((statsPanel.distM || 0) / 1852) * 10) / 10,
+});
 const rig = new CameraRig(camera, renderer.domElement);
 const input = new Input();
 
@@ -137,6 +142,7 @@ async function startWorld(site, mode) {
   atc = new ATCPanel({ world, fm, ap, sound, hud, minimap, traffic });
   layout.dom('atc', atc.el, atc.el.querySelector('.atc-grip'));
   spawn(mode);
+  telemetry.flightStart({ aircraft: fm.typeName, origin: world.spawn?.name || '', mode });
   onResize();
   if (!mcp) { mcp = new MCP(ap, { onFms: toggleFms, fmsEnabled: !!world.frame }); layout.dom('mcp', mcp.el, mcp.el.querySelector('.mcp-grip')); }
   menu.show(false);

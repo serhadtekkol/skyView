@@ -1,6 +1,7 @@
 import {
   buildRoute, validate, parseWaypoint, parseAltConstraint, gcDistanceNm, gcBearing, todDistanceNm, ActiveRoute,
 } from './flightplan.js';
+import { telemetry } from './telemetry.js';
 
 const STORAGE_KEY = 'skyview.fpl';
 const norm = (s) => String(s ?? '').toLocaleLowerCase('tr').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ı/g, 'i');
@@ -228,6 +229,11 @@ export class FMS {
       this.ap.setRoute(activeRoute, destLocal);
       this.minimap?.setActiveRoute(activeRoute);
       this.minimap?.setDraftRoute(null);
+      telemetry.routeExec({
+        origin: route.originAirport?.icao || this.world?.spawn?.name || 'PPOS',
+        destination: `${route.destAirport.icao}/${route.destRunway.id}`,
+        waypoints: (this.draft.wpts || []).map(w => w.id).join(' → '),
+      });
       this.hud?.message(`FMS EXEC: ${route.destAirport.icao} · ${route.totalNm.toFixed(0)} NM · Şimdi "Rotayı Takip Et"e bas`, 'green', 5);
     } finally {
       execBtn.textContent = 'EXEC';

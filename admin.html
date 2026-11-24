@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SkyView · Yönetim & Trafik Paneli</title>
+  <style>
+    :root {
+      --bg: #060b14; --panel: #0c1424; --line: rgba(125,180,245,0.18);
+      --ink: #eaf2ff; --dim: #8da2be; --accent: #31d0ff; --green: #3cf07a; --amber: #ffbe3b; --red: #ff5c5c;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 13.5px/1.45 "Segoe UI", -apple-system, system-ui, sans-serif; min-height: 100vh; }
+    .wrap { max-width: 1360px; margin: 0 auto; padding: 20px 22px 48px; }
+    header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding-bottom: 16px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .mark { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: rgba(49,208,255,0.14); border: 1px solid rgba(49,208,255,0.45); color: var(--accent); font: 700 16px Consolas, monospace; }
+    h1 { margin: 0; font-size: 18px; letter-spacing: 0.5px; }
+    .sub { color: var(--dim); font: 11px Consolas, monospace; }
+    .actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    button, input, select { font: inherit; color: var(--ink); background: rgba(255,255,255,0.06); border: 1px solid var(--line); border-radius: 8px; padding: 7px 11px; outline: none; }
+    button { cursor: pointer; font-weight: 600; transition: .15s; }
+    button:hover { border-color: var(--accent); color: var(--accent); }
+    button.pri { background: rgba(49,208,255,0.18); border-color: rgba(49,208,255,0.5); color: #9fe6ff; }
+    input:focus { border-color: var(--accent); }
+
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+    .kpi-lbl { font: 700 10.5px Consolas, monospace; letter-spacing: 0.9px; text-transform: uppercase; color: var(--dim); }
+    .kpi-val { font: 700 26px/1.2 Consolas, monospace; margin-top: 6px; color: var(--ink); }
+    .kpi-val.cyan { color: var(--accent); }
+    .kpi-val.green { color: var(--green); }
+    .kpi-val.amber { color: var(--amber); }
+
+    .grid2 { display: grid; grid-template-columns: 1.55fr 1fr; gap: 14px; margin-bottom: 18px; }
+    @media (max-width: 960px) { .grid2 { grid-template-columns: 1fr; } }
+    .sec-title { display: flex; justify-content: space-between; align-items: center; font: 700 11px Consolas, monospace; letter-spacing: 1px; text-transform: uppercase; color: var(--accent); margin-bottom: 12px; }
+
+    /* Daily bar chart */
+    .chart { display: flex; align-items: flex-end; gap: 6px; height: 150px; padding-top: 12px; }
+    .bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; min-width: 0; }
+    .bar-wrap { width: 100%; height: 112px; display: flex; align-items: flex-end; justify-content: center; gap: 2px; border-radius: 6px; padding: 2px; transition: background .15s; }
+    .bar-col:hover .bar-wrap, .bar-col.on .bar-wrap { background: rgba(49,208,255,0.12); }
+    .bar { width: 42%; min-height: 2px; border-radius: 3px 3px 0 0; background: var(--accent); transition: height .2s; }
+    .bar.ip { background: var(--green); }
+    .bar-lbl { font: 10px Consolas, monospace; color: var(--dim); white-space: nowrap; }
+    .bar-col.on .bar-lbl { color: var(--accent); font-weight: 700; }
+    .legend { display: flex; gap: 12px; font: 11px Consolas, monospace; color: var(--dim); }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+
+    .side-lists { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 600px) { .side-lists { grid-template-columns: 1fr; } }
+    .mini-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 155px; overflow-y: auto; }
+    .mini-list li { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; padding: 4px 7px; border-radius: 6px; background: rgba(255,255,255,0.03); }
+    .mini-list .cnt { font: 700 11.5px Consolas, monospace; color: var(--accent); }
+    .mini-list .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* Sessions table */
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+    .toolbar input { flex: 1; min-width: 200px; max-width: 360px; }
+    .tbl-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--line); }
+    table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    th { text-align: left; padding: 9px 10px; font: 700 10.5px Consolas, monospace; text-transform: uppercase; letter-spacing: 0.7px; color: var(--dim); background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--line); white-space: nowrap; }
+    td { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); vertical-align: middle; }
+    tr:hover td { background: rgba(49,208,255,0.04); }
+    .mono { font-family: Consolas, monospace; font-size: 12px; }
+    .pill { display: inline-block; padding: 2px 7px; border-radius: 999px; font: 700 10.5px Consolas, monospace; }
+    .pill.live { background: rgba(60,240,122,0.16); color: var(--green); border: 1px solid rgba(60,240,122,0.45); }
+    .pill.end { background: rgba(255,255,255,0.06); color: var(--dim); }
+    .route { color: #ffd27d; font-weight: 600; }
+    .muted { color: var(--dim); font-size: 11px; }
+
+    /* Login overlay */
+    #login { position: fixed; inset: 0; background: rgba(4,8,15,0.92); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; z-index: 20; }
+    #login.hidden { display: none; }
+    .login-box { width: min(360px, 92vw); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 24px 60px rgba(0,0,0,0.65); }
+    .err { color: var(--red); font-size: 12px; min-height: 16px; }
+  </style>
+</head>
+<body>
+  <div id="login">
+    <form class="login-box" id="loginForm">
+      <div class="brand"><div class="mark">✈</div><div><h1>SkyView Admin</h1><div class="sub">Giriş / Uçuş Analitik Paneli</div></div></div>
+      <input id="passIn" type="password" placeholder="Admin şifresi…" autocomplete="current-password" required />
+      <button type="submit" class="pri">Giriş Yap</button>
+      <div class="err" id="loginErr"></div>
+    </form>
+  </div>
+
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <div class="mark">✈</div>
+        <div><h1>SkyView · Trafik & Uçuş Paneli</h1><div class="sub" id="lastUpd">Yükleniyor…</div></div>
+      </div>
+      <div class="actions">
+        <button id="btnRefresh" class="pri">Yenile</button>
+        <button id="btnCsv">CSV İndir</button>
+        <button id="btnSim" onclick="location.href='/'">Simülatöre Dön</button>
+        <button id="btnLogout">Çıkış</button>
+      </div>
+    </header>
+
+    <div class="kpis">
+      <div class="card"><div class="kpi-lbl">Bugün Giriş</div><div class="kpi-val cyan" id="kToday">0</div></div>
+      <div class="card"><div class="kpi-lbl">Bugün Tekil IP</div><div class="kpi-val green" id="kIps">0</div></div>
+      <div class="card"><div class="kpi-lbl">Şu An Aktif Pilot</div><div class="kpi-val amber" id="kLive">0</div></div>
+      <div class="card"><div class="kpi-lbl">Toplam Uçuş Süresi</div><div class="kpi-val" id="kFlight">0 dk</div></div>
+      <div class="card"><div class="kpi-lbl">Ort. Oturum Süresi</div><div class="kpi-val" id="kAvg">0 sn</div></div>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <div class="sec-title">
+          <span>Son 14 Gün · Giriş & Tekil IP</span>
+          <span class="legend"><span><i class="dot" style="background:var(--accent)"></i>Giriş</span><span><i class="dot" style="background:var(--green)"></i>Tekil IP</span></span>
+        </div>
+        <div class="chart" id="chart"></div>
+      </div>
+      <div class="side-lists">
+        <div class="card">
+          <div class="sec-title"><span>Gelen Adresler</span></div>
+          <ul class="mini-list" id="refList"></ul>
+        </div>
+        <div class="card">
+          <div class="sec-title"><span>Popüler Rotalar</span></div>
+          <ul class="mini-list" id="routeList"></ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="sec-title">
+        <span>Oturumlar & Uçuş Kayıtları</span>
+        <span class="sub" id="rowCount">0 kayıt</span>
+      </div>
+      <div class="toolbar">
+        <input id="qIn" placeholder="IP, havalimanı (LTFM), gelen adres veya tarayıcı ara…" />
+        <input id="dayIn" type="date" title="Güne göre filtrele" />
+        <button id="btnClearDay">Tüm Günler</button>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Durum</th>
+              <th>Giriş – Çıkış</th>
+              <th>Oturum</th>
+              <th>Uçuş</th>
+              <th>IP Adresi</th>
+              <th>Geldiği Adres</th>
+              <th>Uçak &amp; Rota (Nereden → Nereye)</th>
+              <th>Cihaz</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const KEY_STORE = 'skyview.adminKey';
+    let token = sessionStorage.getItem(KEY_STORE) || '';
+    let lastData = null;
+
+    const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+    const fmtDur = sec => {
+      sec = Math.max(0, Math.round(sec || 0));
+      const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+      return h ? `${h}sa ${m}dk` : m ? `${m}dk ${s}sn` : `${s}sn`;
+    };
+    const fmtTime = ts => {
+      if (!ts) return '—';
+      const d = new Date(ts);
+      return d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    };
+
+    async function load() {
+      if (!token) { document.getElementById('login').classList.remove('hidden'); return; }
+      const p = new URLSearchParams();
+      if (document.getElementById('dayIn').value) p.set('day', document.getElementById('dayIn').value);
+      if (document.getElementById('qIn').value.trim()) p.set('q', document.getElementById('qIn').value.trim());
+      const res = await fetch('/api/admin/stats?' + p.toString(), { headers: { Authorization: 'Bearer ' + token } });
+      if (res.status === 401 || res.status === 429 || res.status === 503) {
+        const body = await res.json().catch(() => ({}));
+        token = ''; sessionStorage.removeItem(KEY_STORE);
+        document.getElementById('login').classList.remove('hidden');
+        document.getElementById('loginErr').textContent = res.status === 429
+          ? `Çok fazla hatalı deneme. ${Math.ceil((body.retrySec || 900) / 60)} dk sonra tekrar dene.`
+          : res.status === 503
+            ? 'ADMIN_PASS sunucuda tanımlı değil (.env).'
+            : `Şifre hatalı.${body.remaining != null ? ` (Kalan hak: ${body.remaining})` : ''}`;
+        return;
+      }
+      document.getElementById('login').classList.add('hidden');
+      const d = lastData = await res.json();
+      render(d);
+    }
+
+    function render(d) {
+      document.getElementById('lastUpd').textContent = `Son güncelleme: ${new Date().toLocaleTimeString('tr-TR')} · Toplam ${d.kpi.totalSessions} kayıt`;
+      document.getElementById('kToday').textContent = d.kpi.todayVisits;
+      document.getElementById('kIps').textContent = d.kpi.todayUniqueIps;
+      document.getElementById('kLive').textContent = d.kpi.activeNow;
+      document.getElementById('kFlight').textContent = fmtDur(d.kpi.totalFlightSec);
+      document.getElementById('kAvg').textContent = fmtDur(d.kpi.avgDurationSec);
+
+      // Daily chart
+      const maxV = Math.max(1, ...d.daily.map(x => x.visits));
+      const selDay = document.getElementById('dayIn').value;
+      document.getElementById('chart').innerHTML = d.daily.map(x => `
+        <div class="bar-col${selDay === x.day ? ' on' : ''}" data-day="${x.day}" title="${x.day}: ${x.visits} giriş, ${x.uniqueIps} tekil IP, ${x.flightMin} dk uçuş">
+          <div class="bar-wrap">
+            <div class="bar" style="height:${Math.round((x.visits / maxV) * 100)}%"></div>
+            <div class="bar ip" style="height:${Math.round((x.uniqueIps / maxV) * 100)}%"></div>
+          </div>
+          <div class="bar-lbl">${x.day.slice(5)}</div>
+        </div>`).join('');
+      document.querySelectorAll('.bar-col').forEach(el => el.onclick = () => {
+        const dayIn = document.getElementById('dayIn');
+        dayIn.value = dayIn.value === el.dataset.day ? '' : el.dataset.day;
+        load();
+      });
+
+      document.getElementById('refList').innerHTML = d.referrers.length
+        ? d.referrers.map(r => `<li><span class="nm" title="${esc(r.name)}">${esc(r.name)}</span><span class="cnt">${r.count}</span></li>`).join('')
+        : '<li class="muted">Henüz veri yok</li>';
+      document.getElementById('routeList').innerHTML = d.routes.length
+        ? d.routes.map(r => `<li><span class="nm" title="${esc(r.name)}">${esc(r.name)}</span><span class="cnt">${r.count}</span></li>`).join('')
+        : '<li class="muted">Henüz uçuş yok</li>';
+
+      document.getElementById('rowCount').textContent = `${d.sessions.length} kayıt`;
+      document.getElementById('tbody').innerHTML = d.sessions.length ? d.sessions.map(s => {
+        const route = s.origin
+          ? (s.destination ? `${esc(s.origin)} → ${esc(s.destination)}` : esc(s.origin))
+          : '<span class="muted">Menüde</span>';
+        const sub = [s.aircraft, s.distanceNm ? `${s.distanceNm} NM` : '', s.waypoints ? `WPT: ${s.waypoints}` : ''].filter(Boolean).join(' · ');
+        const exitStr = s.active ? '<span style="color:var(--green)">Devam ediyor</span>' : fmtTime(s.endedAt || s.lastSeenAt);
+        return `<tr>
+          <td><span class="pill ${s.active ? 'live' : 'end'}">${s.active ? '● CANLI' : 'Bitti'}</span></td>
+          <td class="mono">${fmtTime(s.startedAt)}<div class="muted">${exitStr}</div></td>
+          <td class="mono">${fmtDur(s.durationSec)}</td>
+          <td class="mono" style="color:var(--green)">${s.flightSec ? fmtDur(s.flightSec) : '—'}</td>
+          <td class="mono">${esc(s.ip)}${s.country ? ` <span class="muted">(${esc(s.country)})</span>` : ''}</td>
+          <td title="${esc(s.refererUrl)}">${esc(s.referer || 'Direkt')}</td>
+          <td><div class="route">${route}</div>${sub ? `<div class="muted">${esc(sub)}</div>` : ''}</td>
+          <td class="muted">${esc(s.device)}</td>
+        </tr>`;
+      }).join('') : '<tr><td colspan="8" class="muted" style="text-align:center;padding:24px">Kayıt bulunamadı.</td></tr>';
+    }
+
+    document.getElementById('loginForm').onsubmit = (e) => {
+      e.preventDefault();
+      token = document.getElementById('passIn').value.trim();
+      sessionStorage.setItem(KEY_STORE, token);
+      document.getElementById('loginErr').textContent = '';
+      load();
+    };
+    document.getElementById('btnRefresh').onclick = load;
+    document.getElementById('btnClearDay').onclick = () => { document.getElementById('dayIn').value = ''; load(); };
+    document.getElementById('dayIn').onchange = load;
+    let qTimer;
+    document.getElementById('qIn').oninput = () => { clearTimeout(qTimer); qTimer = setTimeout(load, 250); };
+    document.getElementById('btnLogout').onclick = () => {
+      token = ''; sessionStorage.removeItem(KEY_STORE);
+      document.getElementById('passIn').value = '';
+      document.getElementById('login').classList.remove('hidden');
+    };
+    document.getElementById('btnCsv').onclick = () => {
+      if (!lastData?.sessions?.length) return;
+      const head = ['Durum','Giris','Cikis','OturumSn','UcusSn','IP','Ulke','Kaynak','Ucak','Kalkis','Varis','MesafeNM','Cihaz'];
+      const rows = lastData.sessions.map(s => [
+        s.active ? 'CANLI' : 'Bitti', new Date(s.startedAt).toISOString(), new Date(s.endedAt || s.lastSeenAt).toISOString(),
+        s.durationSec, s.flightSec, s.ip, s.country, s.referer, s.aircraft, s.origin, s.destination, s.distanceNm, s.device,
+      ].map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','));
+      const blob = new Blob([[head.join(','), ...rows].join('\n')], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `skyview-logs-${new Date().toISOString().slice(0,10)}.csv`; a.click();
+    };
+
+    if (token) load();
+    setInterval(() => { if (token) load(); }, 15000);
+  </script>
+</body>
+</html>
